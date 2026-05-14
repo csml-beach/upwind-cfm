@@ -2,9 +2,18 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
+import random
 from scipy.spatial.distance import cdist
 from scipy.optimize import linear_sum_assignment
 import os
+
+# --- 0. Set Seed Function ---
+def set_seed(seed=42):
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 # --- 1. Dataset & Model ---
 def get_noisy_spiral(n_samples=2000, noise=0.15):
@@ -32,6 +41,7 @@ class VelocityNet(nn.Module):
 def train_cfm_upwind_loss(x1, n_epochs=1000, batch_size=256, lambda_upwind=0.0):
     model = VelocityNet()
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=n_epochs, eta_min=1e-5)
     dt_upwind = 0.05 
     model.train()
     for epoch in range(n_epochs):
@@ -57,6 +67,11 @@ def train_cfm_upwind_loss(x1, n_epochs=1000, batch_size=256, lambda_upwind=0.0):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        scheduler.step()
+        
+        if epoch % 200 == 0 or epoch == n_epochs - 1:
+            print(f"Epoch {epoch:04d} | Std Loss: {loss_std.item():.4f} | Upwind Loss: {loss_upwind.item():.4f}")
+            
     return model
 
 # --- 2. Solvers ---
@@ -149,15 +164,16 @@ def compute_local_lipschitz(model, traj, eps=1e-4):
 # --- 4. Main Execution ---
 if __name__ == "__main__":
     print("Generating data...")
-    torch.manual_seed(42)
-    np.random.seed(42)
+    set_seed(42)
     x1_target = get_noisy_spiral(1000, noise=0.15) # 1000 for faster W-distance computation
     
     print("\nTraining STANDARD Model (lambda=0)...")
-    model_std = train_cfm_upwind_loss(x1_target, n_epochs=1000, lambda_upwind=0.0)
+    set_seed(42)
+    model_std = train_cfm_upwind_loss(x1_target, n_epochs=2000, lambda_upwind=0.0)
     
-    print("Training UPWIND-REGULARIZED Model (lambda=2.0)...")
-    model_upwind = train_cfm_upwind_loss(x1_target, n_epochs=1000, lambda_upwind=2.0)
+    print("\nTraining UPWIND-REGULARIZED Model (lambda=2.0)...")
+    set_seed(42)
+    model_upwind = train_cfm_upwind_loss(x1_target, n_epochs=2000, lambda_upwind=2.0)
     
     print("\n==============================================")
     print(" METRICS REPORT: 15 STEPS, HIGH NOISE (sigma=1.0)")
@@ -167,14 +183,14 @@ if __name__ == "__main__":
     inf_noise = 1.0
     steps = 15
     
-    torch.manual_seed(42)
+    set_seed(42)
     x0_eval = torch.randn(n_eval, 2)
     
     # Generate Trajectories
-    torch.manual_seed(42); traj_std_std = standard_euler(model_std, x0_eval, steps=steps, inference_noise=inf_noise)
-    torch.manual_seed(42); traj_std_upw = upwind_euler(model_std, x0_eval, steps=steps, alpha=0.8, inference_noise=inf_noise)
-    torch.manual_seed(42); traj_upw_std = standard_euler(model_upwind, x0_eval, steps=steps, inference_noise=inf_noise)
-    torch.manual_seed(42); traj_upw_upw = upwind_euler(model_upwind, x0_eval, steps=steps, alpha=0.8, inference_noise=inf_noise)
+    set_seed(42); traj_std_std = standard_euler(model_std, x0_eval, steps=steps, inference_noise=inf_noise)
+    set_seed(42); traj_std_upw = upwind_euler(model_std, x0_eval, steps=steps, alpha=0.8, inference_noise=inf_noise)
+    set_seed(42); traj_upw_std = standard_euler(model_upwind, x0_eval, steps=steps, inference_noise=inf_noise)
+    set_seed(42); traj_upw_upw = upwind_euler(model_upwind, x0_eval, steps=steps, alpha=0.8, inference_noise=inf_noise)
     
     combinations = [
         ("Std Model + Std Solver", model_std, traj_std_std),
@@ -195,8 +211,8 @@ if __name__ == "__main__":
     print(" METRIC: DIVERGENCE UNDER PERTURBATION")
     print("==============================================")
     # Compare clean run vs noisy run (Standard Euler)
-    torch.manual_seed(42); clean_std = standard_euler(model_std, x0_eval, steps=15, inference_noise=0.0)[-1]
-    torch.manual_seed(42); clean_upw = standard_euler(model_upwind, x0_eval, steps=15, inference_noise=0.0)[-1]
+    set_seed(42); clean_std = standard_euler(model_std, x0_eval, steps=15, inference_noise=0.0)[-1]
+    set_seed(42); clean_upw = standard_euler(model_upwind, x0_eval, steps=15, inference_noise=0.0)[-1]
     
     div_std = compute_wasserstein(clean_std, traj_std_std[-1])
     div_upw = compute_wasserstein(clean_upw, traj_upw_std[-1])
