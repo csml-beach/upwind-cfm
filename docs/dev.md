@@ -49,6 +49,15 @@ We tested the combinations of Standard vs. Upwind Model, and Standard vs. Upwind
 
 *(See `images/combined_comparison.png` for visual results)*
 
+### 1D Spatiotemporal Dynamics (Burgers' Equation)
+To validate Upwind-CFM on high-dimensional sequential data, we scaled the architecture to a **1D U-Net** and simulated the **viscous Burgers' equation**. We formulated this as an **autoregressive (next-step) generation task**, where the model learns the physical transport operator mapping the wave from state $t_k$ to $t_{k+1}$.
+
+Autoregressive video/sequence generation is notoriously difficult because standard models accumulate errors that quickly compound into structural failure (static or tearing). We rolled out our model autoregressively over 32 frames while injecting inference noise:
+1. **Standard Autoregressive CFM:** Fails to maintain the physical shockwave. Compounding errors cause the spatiotemporal surface to disintegrate.
+2. **Upwind-CFM (Autoregressive):** The Upwind Advection Loss embeds powerful momentum into the vector field. It effectively absorbs inference noise and actively suppresses compounding errors, maintaining the sharp structural integrity of the wave across all 32 frames.
+
+*(See `images/burgers_autoregressive_comparison.png` for visual results)*
+
 ## Strategic Implications & Future Work
 The success of upwind-stabilization has profound implications for generative modeling:
 
