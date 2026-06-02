@@ -1,0 +1,27 @@
+{
+  "dataset": "burgers_autoregressive",
+  "dataset_kwargs": {
+    "n_train": 1000,
+    "n_test": 100,
+    "nt": 32,
+    "nu": 0.02,
+    "nx": 64
+  },
+  "method": "standard_cfm",
+  "model": "unet1d",
+  "seed": 42,
+  "solver": "euler",
+  "solver_kwargs": {
+    "steps": 5,
+    "noise": 0.0
+  },
+  "train": {
+    "batch_size": 128,
+    "epochs": 2000,
+    "log_every": 200,
+    "lr": 0.001
+  },
+  "eval": {
+    "n_eval": 32
+  }
+}
