@@ -1,0 +1,32 @@
+{
+  "dataset": "burgers_autoregressive",
+  "dataset_kwargs": {
+    "n_train": 16,
+    "n_test": 8,
+    "nt": 8,
+    "nu": 0.02,
+    "nx": 32
+  },
+  "method": "lc_finite_difference",
+  "method_kwargs": {
+    "dt": 0.05,
+    "weight": 2.0
+  },
+  "model": "unet1d",
+  "seed": 42,
+  "solver": "euler",
+  "solver_kwargs": {
+    "steps": 2,
+    "noise": 0.0
+  },
+  "train": {
+    "batch_size": 16,
+    "epochs": 3,
+    "log_every": 1,
+    "lr": 0.001
+  },
+  "eval": {
+    "n_eval": 4
+  },
+  "run_name": "smoke_burgers_autoregressive_lc_fd"
+}

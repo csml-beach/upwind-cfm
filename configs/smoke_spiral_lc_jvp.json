@@ -1,0 +1,29 @@
+{
+  "dataset": "spiral",
+  "dataset_kwargs": {
+    "n_train": 128,
+    "n_test": 64,
+    "noise": 0.15
+  },
+  "method": "lc_jvp_material_derivative",
+  "method_kwargs": {
+    "weight": 0.1
+  },
+  "model": "mlp",
+  "seed": 42,
+  "solver": "euler",
+  "solver_kwargs": {
+    "steps": 3,
+    "noise": 0.0
+  },
+  "train": {
+    "batch_size": 32,
+    "epochs": 3,
+    "log_every": 1,
+    "lr": 0.001
+  },
+  "eval": {
+    "n_eval": 64
+  },
+  "run_name": "smoke_spiral_lc_jvp"
+}

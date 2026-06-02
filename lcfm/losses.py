@@ -11,6 +11,19 @@ def cfm_batch(model, x0, x1, t):
     return xt, target, vt
 
 
+def material_derivative_jvp(model, x, t, velocity=None):
+    """Compute d/ds v(x+s*velocity, t+s) at s=0 with a JVP."""
+    if velocity is None:
+        velocity = model(x, t)
+    _, material = torch.autograd.functional.jvp(
+        lambda x_in, t_in: model(x_in, t_in),
+        (x, t),
+        (velocity.detach(), torch.ones_like(t)),
+        create_graph=True,
+    )
+    return material
+
+
 class Method:
     min_t = 0.0
 
@@ -61,12 +74,7 @@ class LagrangianConsistencyJVP(Method):
         vt = model(xt, t)
         cfm = F.mse_loss(vt, target)
 
-        _, material = torch.autograd.functional.jvp(
-            lambda x_in, t_in: model(x_in, t_in),
-            (xt, t),
-            (vt.detach(), torch.ones_like(t)),
-            create_graph=True,
-        )
+        material = material_derivative_jvp(model, xt, t, vt)
         return {"cfm": cfm, "lc_jvp": self.weight * torch.mean(material.pow(2))}
 
 

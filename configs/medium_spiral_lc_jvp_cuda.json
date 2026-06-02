@@ -1,0 +1,32 @@
+{
+  "dataset": "spiral",
+  "dataset_kwargs": {
+    "n_train": 2000,
+    "n_test": 1000,
+    "noise": 0.15
+  },
+  "method": "lc_jvp_material_derivative",
+  "method_kwargs": {
+    "weight": 0.1
+  },
+  "model": "mlp",
+  "seed": 42,
+  "device": "cuda",
+  "solver": "euler",
+  "solver_kwargs": {
+    "steps": 15,
+    "noise": 0.0
+  },
+  "train": {
+    "batch_size": 256,
+    "epochs": 200,
+    "log_every": 50,
+    "lr": 0.001
+  },
+  "eval": {
+    "n_eval": 1000,
+    "plot_seed": 1234
+  },
+  "out_dir": "/mnt/data/upwind-cfm-runs",
+  "run_name": "medium_spiral_lc_jvp_cuda"
+}
