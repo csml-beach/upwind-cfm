@@ -40,21 +40,33 @@ def spiral_eval_inputs(problem, config, device, eval_seed=None):
     return x0, target
 
 
+def solver_config(config, steps=None, noise=None):
+    cfg = dict(config.get("solver_kwargs", {"steps": 15}))
+    if steps is not None:
+        cfg["steps"] = steps
+    if noise is not None:
+        cfg["noise"] = noise
+    return cfg
+
+
 @torch.no_grad()
-def spiral_trajectory(model, x0, config, eval_seed=None):
+def spiral_trajectory(model, x0, config, eval_seed=None, steps=None, noise=None):
     if eval_seed is None:
         eval_seed = config.get("eval", {}).get("plot_seed", 1234)
     set_seed(eval_seed)
-    return solve(config.get("solver", "euler"), model, x0, config.get("solver_kwargs", {"steps": 15}))
+    return solve(config.get("solver", "euler"), model, x0, solver_config(config, steps, noise))
 
 
-def plot_spiral_run(run_dir, output=None, eval_seed=None, n_traj=24):
+def plot_spiral_run(run_dir, output=None, eval_seed=None, n_traj=24, n_final=None, steps=None, noise=None):
     device = torch.device("cpu")
     config, problem, model = load_run(run_dir, device)
     if problem.name != "spiral":
         raise ValueError(f"plot_spiral_run only supports spiral runs, got {problem.name}")
     x0, target = spiral_eval_inputs(problem, config, device, eval_seed)
-    traj = spiral_trajectory(model, x0, config, eval_seed)
+    traj = spiral_trajectory(model, x0, config, eval_seed, steps, noise)
+    final = traj[-1]
+    if n_final is not None:
+        final = final[:n_final]
 
     run_dir = Path(run_dir)
     output = Path(output) if output else run_dir / "plot.png"
@@ -62,7 +74,7 @@ def plot_spiral_run(run_dir, output=None, eval_seed=None, n_traj=24):
 
     fig, ax = plt.subplots(figsize=(6, 6))
     ax.scatter(target[:, 0].cpu(), target[:, 1].cpu(), s=8, c="0.75", alpha=0.55, label="target")
-    ax.scatter(traj[-1, :, 0].cpu(), traj[-1, :, 1].cpu(), s=10, c="#2563eb", alpha=0.75, label="generated")
+    ax.scatter(final[:, 0].cpu(), final[:, 1].cpu(), s=10, c="#2563eb", alpha=0.75, label="generated")
     for i in range(min(n_traj, traj.shape[1])):
         ax.plot(traj[:, i, 0].cpu(), traj[:, i, 1].cpu(), color="#2563eb", alpha=0.25, linewidth=0.8)
     ax.set_title(run_dir.name)
@@ -76,7 +88,7 @@ def plot_spiral_run(run_dir, output=None, eval_seed=None, n_traj=24):
     return output
 
 
-def plot_spiral_comparison(run_dirs, output, eval_seed=1234, n_traj=16):
+def plot_spiral_comparison(run_dirs, output, eval_seed=1234, n_traj=16, n_final=None, steps=None, noise=None):
     device = torch.device("cpu")
     loaded = [load_run(run_dir, device) for run_dir in run_dirs]
     first_config, first_problem, _ = loaded[0]
@@ -90,9 +102,12 @@ def plot_spiral_comparison(run_dirs, output, eval_seed=1234, n_traj=16):
         config, problem, model = loaded_item
         if problem.name != "spiral":
             raise ValueError(f"comparison only supports spiral runs, got {problem.name}")
-        traj = spiral_trajectory(model, x0, config, eval_seed)
+        traj = spiral_trajectory(model, x0, config, eval_seed, steps, noise)
+        final = traj[-1]
+        if n_final is not None:
+            final = final[:n_final]
         ax.scatter(target[:, 0].cpu(), target[:, 1].cpu(), s=8, c="0.75", alpha=0.55)
-        ax.scatter(traj[-1, :, 0].cpu(), traj[-1, :, 1].cpu(), s=10, c=color, alpha=0.75)
+        ax.scatter(final[:, 0].cpu(), final[:, 1].cpu(), s=10, c=color, alpha=0.75)
         for i in range(min(n_traj, traj.shape[1])):
             ax.plot(traj[:, i, 0].cpu(), traj[:, i, 1].cpu(), color=color, alpha=0.25, linewidth=0.8)
         ax.set_title(Path(run_dir).name)
