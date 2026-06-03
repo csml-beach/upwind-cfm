@@ -1,0 +1,4 @@
+[core]
+    remote = onedrive-backup
+['remote "onedrive-backup"']
+    url = /Users/sarshar/Library/CloudStorage/OneDrive-csulb/Backup/dvc/upwind-cfm
