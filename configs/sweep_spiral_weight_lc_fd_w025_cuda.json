@@ -1,0 +1,37 @@
+{
+  "dataset": "spiral",
+  "dataset_kwargs": {
+    "n_train": 5000,
+    "n_test": 1000,
+    "noise": 0.15
+  },
+  "method": "lc_finite_difference",
+  "method_kwargs": {
+    "dt": 0.05,
+    "weight": 0.25
+  },
+  "model": "mlp",
+  "seed": 42,
+  "device": "cuda",
+  "solver": "euler",
+  "solver_kwargs": {
+    "steps": 5,
+    "noise": 0.25
+  },
+  "train": {
+    "batch_size": 512,
+    "epochs": 2000,
+    "log_every": 500,
+    "lr": 0.001
+  },
+  "eval": {
+    "n_eval": 1000,
+    "plot_seed": 1234
+  },
+  "tags": {
+    "sweep": "spiral_regularizer_weight_sweep",
+    "purpose": "weight_ablation"
+  },
+  "out_dir": "/mnt/data/upwind-cfm-runs/spiral_regularizer_weight_sweep",
+  "run_name": "lc_finite_difference_w025"
+}
