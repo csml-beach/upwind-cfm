@@ -1,71 +1,127 @@
-# Lagrangian Consistency Flow Matching Metrics and Future Plans
+# Working Plan: Uncertainty-Aware Streamline Stabilization
 
-## Naming and Paper Narrative
+## Current Position
 
-We will rename the current method from **Upwind-CFM** to **Lagrangian Consistency Flow Matching**.
+The previous finite-difference Lagrangian consistency loss should no longer be treated as the main novelty. It is best understood as a semi-Lagrangian / characteristic finite-difference approximation of the material derivative,
 
-The current method should be described as a finite-difference regularizer that encourages velocity consistency along the learned transport path. We should avoid claiming that it is a full numerical upwind scheme.
+$$
+\frac{Dv_\theta}{Dt}
+=
+\partial_t v_\theta + (v_\theta \cdot \nabla_x)v_\theta,
+$$
 
-When we overhaul the paper writeup, the narrative should proceed in a structured derivation:
+and is conceptually very close to Isokinetic Flow Matching's Jacobian-free material-derivative regularizer. It remains valuable as a baseline and implementation scaffold, but it is not enough by itself for a strong paper claim.
 
-1. Start from the Lagrangian view of a moving sample under a learned flow-matching velocity field.
-2. Introduce the material derivative:
-   $$
-   \frac{Dv}{Dt} = \partial_t v + (v \cdot \nabla_x)v
-   $$
-3. Explain that this quantity measures how the learned velocity changes for a sample moving along its trajectory.
-4. Argue that large material derivative corresponds to high acceleration, trajectory curvature, solver sensitivity, and poor low-NFE behavior.
-5. Derive a backward characteristic / semi-Lagrangian finite-difference approximation:
-   $$
-   \frac{Dv_\theta}{Dt}(x,t)
-   \approx
-   \frac{
-   v_\theta(x,t) - v_\theta(x - \Delta t\, v_\theta(x,t), t-\Delta t)
-   }{\Delta t}
-   $$
-6. Present the current loss as penalizing the numerator of this finite-difference material derivative:
-   $$
-   \mathcal{L}_{LC}
-   =
-   \left\|
-   v_\theta(x,t) -
-   v_\theta(x - \Delta t\, v_\theta(x,t), t-\Delta t)
-   \right\|^2
-   $$
-7. Position the method as a pathwise velocity-consistency regularizer for flow matching, then compare it directly against curvature, acceleration, rectification, consistency, and smoothing baselines.
+The working research idea is now:
 
-## Current 2D Metrics Strategy
-To quantitatively validate the advantages of the Lagrangian consistency regularizer and the velocity-smoothing solver, we will implement the following metrics on our 2D spiral experiments:
+> Flow matching should be stabilized where coarse ODE integration is numerically fragile, but acceleration should not be suppressed uniformly in regions where multimodal uncertainty makes acceleration necessary.
 
-### Geometry & Accuracy
-1. **Path Length Ratio (Straightness / Smoothness):**
-   - **Concept:** Measures the ratio of the actual integrated trajectory length to the straight-line distance between the initial noise sample $x_0$ and the final generated point $x_1$. 
-   - **Why it matters:** Standard CFM trajectories trained with point-wise MSE can zig-zag. Lagrangian consistency penalizes abrupt velocity changes along the trajectory, resulting in smoother, straighter trajectories. An ideal path length ratio is close to 1.0.
+## Proposed Method Direction
 
-2. **Wasserstein Distance (Distributional Accuracy):**
-   - **Concept:** Calculates the Earth Mover's Distance between the final generated point cloud and the true target data distribution.
-   - **Why it matters:** Ensures that the enforced smoothness does not degrade the model's ability to accurately capture the complex geometry of the target distribution.
+Define the material residual
 
-### Robustness & Efficiency
-3. **NFE to Threshold (Number of Function Evaluations):**
-   - **Concept:** Evaluate the Wasserstein distance across a range of step sizes (e.g., 5, 10, 15, 20 steps).
-   - **Why it matters:** Proves **Fast Inference**. If Upwind-CFM achieves a low Wasserstein distance in just 10 steps, but Standard CFM requires 30 steps to achieve that same quality, it quantifies the computational savings.
+$$
+R_\theta(x,t)
+=
+\partial_t v_\theta(x,t)
++
+(v_\theta(x,t)\cdot\nabla_x)v_\theta(x,t).
+$$
 
-4. **Divergence under Perturbation (Noise Sensitivity):**
-   - **Concept:** Run generation twice: once with zero inference noise, and once with high inference noise ($\sigma = 1.0$). Measure the Wasserstein distance between the two final distributions.
-   - **Why it matters:** Quantifies **Robustness**. The Lagrangian consistency regularizer should reduce sensitivity to perturbations by discouraging abrupt pathwise velocity changes.
+Instead of penalizing $\|R_\theta\|^2$ uniformly, use a solver-aware and uncertainty-aware stabilization weight:
 
-5. **Local Lipschitz Constant (Field Stiffness):**
-   - **Concept:** Estimate the gradient of the vector field $\nabla v_\theta(x)$ along the trajectories using finite differences or automatic differentiation.
-   - **Why it matters:** A vector field with high gradients (high Lipschitz constant) is mathematically "stiff." Stiff ODEs require tiny step sizes to avoid numerical explosion. If the Lagrangian consistency loss lowers effective field stiffness or trajectory acceleration, this helps explain why it can support larger step sizes and faster inference.
+$$
+\mathcal{L}_{stab}
+=
+\tau(x,t)\|R_\theta(x,t)\|^2.
+$$
 
-## Future Metrics (For Sequential Data & Video Generation)
-When scaling this research to temporal data (e.g., 1D moving waves, fluid simulations, or video frames), we will evaluate the temporal regularizing properties of Lagrangian Consistency Flow Matching using:
+The intended structure is
 
-1. **Temporal Total Variation:**
-   - **Concept:** Measures the variation between consecutive generated states: $||x_t - x_{t-1}||$.
-   - **Why it matters:** In dynamic flow matching, intermediate integration steps may represent physical or sequence time. High variation indicates unnatural "flickering" or structural tearing. Pathwise velocity consistency should reduce this when it does not oversmooth the dynamics.
+$$
+\tau(x,t)
+=
+\tau_{\mathrm{CFL}}(x,t)
+\,
+g_{\mathrm{uncertainty}}(x,t).
+$$
 
-2. **Fréchet Video Distance (FVD):**
-   - **Concept:** The industry standard for evaluating video generation quality.
-   - **Why it matters:** Evaluates both the visual fidelity of individual frames and the temporal coherence across the entire sequence.
+The CFL/SUPG-style part should grow when the learned field is likely to cause coarse-solver error. A simple first form is
+
+$$
+\tau_{\mathrm{CFL}}(x,t)
+\approx
+\frac{\Delta t_{\mathrm{infer}}}
+{1 + \Delta t_{\mathrm{infer}} L_\theta(x,t)},
+$$
+
+where $L_\theta$ is a local stiffness proxy such as a directional Jacobian norm, finite-difference velocity change, or local Lipschitz estimate.
+
+The uncertainty gate should reduce regularization where the conditional transport is ambiguous:
+
+$$
+g_{\mathrm{uncertainty}}(x,t)
+=
+\frac{1}
+{1+\kappa \widehat{\mathrm{Var}}[u\mid x_t,t]}.
+$$
+
+As a first ablation, a time-only gate such as $g(t)=t^\beta$ is acceptable, but the paper should not stop there. The more scientific version needs a measurable uncertainty proxy.
+
+## Paper Narrative
+
+When we overhaul the writeup, the derivation should proceed in this order:
+
+1. Start from the Lagrangian view of a sample moving under the learned flow-matching ODE.
+2. Introduce the material derivative as pathwise acceleration.
+3. Explain why large material residuals cause low-NFE solver error.
+4. Explain why zero acceleration is not globally appropriate for multimodal generative transport.
+5. Introduce a stabilized residual penalty with a CFL/SUPG-style weight.
+6. Add uncertainty-aware gating so the method regularizes unnecessary acceleration more than necessary mode-commitment acceleration.
+7. Treat semi-Lagrangian finite-difference LC and Iso-FM as close baselines, not as the main novelty.
+
+## Immediate Benchmark Needs
+
+The first benchmark should expose both sides of the idea:
+
+- solver fragility under coarse inference,
+- and early-time/multimodal ambiguity where uniform acceleration suppression may over-constrain.
+
+Useful metrics:
+
+- low-NFE Wasserstein or task error,
+- NFE-quality curves,
+- trajectory acceleration / material residual,
+- path length ratio,
+- mode coverage or mode assignment accuracy on multimodal toy data,
+- sensitivity to regularization strength and uncertainty-gate strength.
+
+## Baselines
+
+Required initial baselines:
+
+- Standard CFM
+- LC finite difference as our semi-Lagrangian/Iso-FM-style variant
+- Iso-FM-faithful finite-difference loss if its weighting/normalization differs materially
+- JVP material-derivative penalty
+- CFL/SUPG-style stabilization without uncertainty gate
+- uncertainty-gated stabilization without CFL/stiffness weighting
+- full proposed CFL/SUPG plus uncertainty gate
+
+Later baselines:
+
+- OT-CFM
+- Rectified Flow / Reflow
+- Consistency Flow Matching
+- Temporal Pair Consistency
+- higher-order ODE solvers such as Heun, RK4, and adaptive solvers
+
+## Success Criteria
+
+This direction is worth developing only if it can show at least one of the following:
+
+- better few-step generation than strong acceleration-regularization baselines,
+- less over-smoothing or better mode coverage than uniform material-derivative suppression,
+- improved stability on autoregressive or PDE-like tasks,
+- a clear solver-aware explanation that predicts when the regularizer should help,
+- a meaningful ablation showing that CFL weighting and uncertainty gating contribute differently.
