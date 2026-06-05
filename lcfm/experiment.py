@@ -52,6 +52,8 @@ def train_model(problem, config, device):
 def eval_spiral(problem, model, config, device):
     eval_cfg = config.get("eval", {})
     n_eval = eval_cfg.get("n_eval", 1000)
+    eval_seed = eval_cfg.get("eval_seed", 1234)
+    set_seed(eval_seed)
     x0 = problem.eval_initial(n_eval, device)
     target = problem.target_eval(n_eval, device)
     traj = solve(config.get("solver", "euler"), model, x0, config.get("solver_kwargs", {"steps": 15}))
@@ -66,6 +68,8 @@ def eval_spiral(problem, model, config, device):
 def eval_five_modes(problem, model, config, device):
     eval_cfg = config.get("eval", {})
     n_eval = eval_cfg.get("n_eval", 1000)
+    eval_seed = eval_cfg.get("eval_seed", 1234)
+    set_seed(eval_seed)
     x0 = problem.eval_initial(n_eval, device)
     target = problem.target_eval(n_eval, device)
     traj = solve(config.get("solver", "euler"), model, x0, config.get("solver_kwargs", {"steps": 5}))
@@ -89,6 +93,8 @@ def eval_five_modes(problem, model, config, device):
 def eval_burgers_autoregressive(problem, model, config, device):
     eval_cfg = config.get("eval", {})
     n_eval = eval_cfg.get("n_eval", min(32, problem.n_test))
+    eval_seed = eval_cfg.get("eval_seed", 1234)
+    set_seed(eval_seed)
     solver_cfg = dict(config.get("solver_kwargs", {"steps": 5}))
     x = problem.eval_initial(n_eval, device)
     frames = [x.detach().cpu()]
