@@ -40,6 +40,48 @@ class SpiralProblem:
         return self.test[idx].to(device)
 
 
+class FiveModesProblem:
+    name = "five_modes"
+    dim = 2
+
+    def __init__(self, config):
+        self.n_train = config.get("n_train", 5000)
+        self.n_test = config.get("n_test", 2000)
+        self.radius = config.get("radius", 4.0)
+        self.sigma_mode = config.get("sigma_mode", 0.20)
+        self.n_modes = 5
+        self.mode_centers = self._make_centers()
+        self.train = self._sample_modes(self.n_train)
+        self.test = self._sample_modes(self.n_test)
+
+    def _make_centers(self):
+        angles = torch.arange(self.n_modes, dtype=torch.float32) * (2.0 * torch.pi / self.n_modes)
+        return self.radius * torch.stack([torch.cos(angles), torch.sin(angles)], dim=1)
+
+    def _sample_modes(self, n_samples):
+        mode_idx = torch.randint(self.n_modes, (n_samples,))
+        centers = self.mode_centers[mode_idx]
+        return centers + self.sigma_mode * torch.randn(n_samples, self.dim)
+
+    def sample_train_batch(self, batch_size, device):
+        idx = torch.randint(self.train.shape[0], (batch_size,))
+        x1 = self.train[idx].to(device)
+        x0 = torch.randn_like(x1)
+        return x0, x1
+
+    def eval_initial(self, n_eval, device):
+        return torch.randn(n_eval, self.dim, device=device)
+
+    def target_eval(self, n_eval, device):
+        if n_eval <= self.test.shape[0]:
+            return self.test[:n_eval].to(device)
+        idx = torch.randint(self.test.shape[0], (n_eval,))
+        return self.test[idx].to(device)
+
+    def centers(self, device):
+        return self.mode_centers.to(device)
+
+
 def burgers_rhs(u, t, dx, nu):
     u_x = (np.roll(u, -1) - np.roll(u, 1)) / (2 * dx)
     u_xx = (np.roll(u, -1) - 2 * u + np.roll(u, 1)) / (dx**2)
@@ -89,4 +131,5 @@ class BurgersAutoregressiveProblem:
 
 
 register(DATASETS, "spiral")(SpiralProblem)
+register(DATASETS, "five_modes")(FiveModesProblem)
 register(DATASETS, "burgers_autoregressive")(BurgersAutoregressiveProblem)

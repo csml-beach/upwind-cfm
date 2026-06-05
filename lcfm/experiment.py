@@ -9,6 +9,7 @@ from . import models  # noqa: F401
 from . import solvers  # noqa: F401
 from .losses import build_method
 from .metrics import (
+    mode_statistics,
     path_length_ratio,
     rmse,
     temporal_tv,
@@ -62,6 +63,29 @@ def eval_spiral(problem, model, config, device):
 
 
 @torch.no_grad()
+def eval_five_modes(problem, model, config, device):
+    eval_cfg = config.get("eval", {})
+    n_eval = eval_cfg.get("n_eval", 1000)
+    x0 = problem.eval_initial(n_eval, device)
+    target = problem.target_eval(n_eval, device)
+    traj = solve(config.get("solver", "euler"), model, x0, config.get("solver_kwargs", {"steps": 5}))
+    metrics = {
+        "wasserstein": wasserstein_match(traj[-1], target),
+        "path_length_ratio": path_length_ratio(traj),
+        "trajectory_acceleration": trajectory_acceleration(traj),
+    }
+    metrics.update(
+        mode_statistics(
+            traj[-1],
+            problem.centers(device),
+            p_min=eval_cfg.get("mode_p_min", 0.05),
+            hit_radius=eval_cfg.get("hit_radius", 3.0 * problem.sigma_mode),
+        )
+    )
+    return metrics
+
+
+@torch.no_grad()
 def eval_burgers_autoregressive(problem, model, config, device):
     eval_cfg = config.get("eval", {})
     n_eval = eval_cfg.get("n_eval", min(32, problem.n_test))
@@ -83,6 +107,8 @@ def eval_burgers_autoregressive(problem, model, config, device):
 def evaluate(problem, model, config, device):
     if problem.name == "spiral":
         return eval_spiral(problem, model, config, device)
+    if problem.name == "five_modes":
+        return eval_five_modes(problem, model, config, device)
     if problem.name == "burgers_autoregressive":
         return eval_burgers_autoregressive(problem, model, config, device)
     raise ValueError(f"No evaluator for problem: {problem.name}")

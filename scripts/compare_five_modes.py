@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from lcfm.plotting import plot_five_modes_comparison
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("run_dirs", nargs="+")
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--eval-seed", type=int, default=1234)
+    parser.add_argument("--n-traj", type=int, default=None, help="Number of trajectories per panel. Default draws all.")
+    parser.add_argument("--n-final", type=int, default=600)
+    parser.add_argument("--steps", type=int, default=None)
+    parser.add_argument("--noise", type=float, default=None)
+    parser.add_argument("--trajectory-alpha", type=float, default=0.08)
+    parser.add_argument("--trajectory-width", type=float, default=0.45)
+    args = parser.parse_args()
+    output = plot_five_modes_comparison(
+        args.run_dirs,
+        args.output,
+        args.eval_seed,
+        args.n_traj,
+        args.n_final,
+        args.steps,
+        args.noise,
+        args.trajectory_alpha,
+        args.trajectory_width,
+    )
+    print(f"saved {output}")
+
+
+if __name__ == "__main__":
+    main()

@@ -27,6 +27,23 @@ def trajectory_acceleration(traj):
     return float(torch.norm(acc, dim=-1).mean().item())
 
 
+def mode_statistics(samples, centers, p_min=0.05, hit_radius=None):
+    if hit_radius is None:
+        raise ValueError("mode_statistics requires hit_radius for hit-based mode metrics.")
+    distances = torch.cdist(samples, centers)
+    assignments = torch.argmin(distances, dim=1)
+    nearest_distances = distances[torch.arange(samples.shape[0], device=samples.device), assignments]
+    hits = nearest_distances <= hit_radius
+    hit_counts = torch.bincount(assignments[hits], minlength=centers.shape[0]).float()
+    hit_probs = hit_counts / samples.shape[0]
+    return {
+        "mode_hit_coverage": int((hit_probs > p_min).sum().item()),
+        "target_hit_rate": float(hits.float().mean().item()),
+        "mode_hit_probs": [float(p.item()) for p in hit_probs],
+        "hit_radius": float(hit_radius),
+    }
+
+
 def temporal_tv(video):
     diffs = video[:, 1:, :] - video[:, :-1, :]
     return float(torch.norm(diffs, dim=-1).pow(2).mean().item())
