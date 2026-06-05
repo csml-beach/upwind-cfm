@@ -251,10 +251,11 @@ def _draw_five_mode_panel(
     if metrics:
         coverage = metrics.get("mode_hit_coverage", float("nan"))
         hit_rate = metrics.get("target_hit_rate", float("nan"))
+        accel = metrics.get("trajectory_acceleration", float("nan"))
+        w_dist = metrics.get("wasserstein", float("nan"))
         text = (
-            f"W={metrics.get('wasserstein', float('nan')):.3f}\n"
-            f"hit cov={coverage}/5\n"
-            f"hit rate={hit_rate:.2f}"
+            f"W={w_dist:.3f} | hit={hit_rate*100:.1f}% | acc={accel:.2f}\n"
+            f"coverage: {coverage}/5 modes"
         )
         ax.text(
             0.03,
@@ -268,10 +269,10 @@ def _draw_five_mode_panel(
             bbox={"boxstyle": "round,pad=0.25", "facecolor": "white", "edgecolor": "#e5e7eb", "alpha": 0.86},
         )
     ax.set_aspect("equal", adjustable="box")
-    ax.set_xlim(-5.6, 5.6)
-    ax.set_ylim(-5.6, 5.6)
-    ax.set_xticks([-4, 0, 4])
-    ax.set_yticks([-4, 0, 4])
+    ax.set_xlim(-7.5, 7.5)
+    ax.set_ylim(-7.5, 7.5)
+    ax.set_xticks([-6, -3, 0, 3, 6])
+    ax.set_yticks([-6, -3, 0, 3, 6])
     ax.tick_params(labelsize=8, colors="#4b5563", length=3)
     for spine in ax.spines.values():
         spine.set_color("#d1d5db")

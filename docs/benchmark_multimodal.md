@@ -226,3 +226,11 @@ The first implementation should add:
 - one comparison plotting script/view that shows final samples and a few trajectories.
 
 Keep this benchmark small, fast, and reproducible. It is a diagnostic, not the final paper experiment.
+
+## Initial Experimental Observations
+
+**Iso-FM Overregularization (2026-06-05):** Initial experiments with Iso-FM finite difference using hyperparameters from the literature (weight=4.0, epsilon=0.05, alpha=2.0) resulted in severe mode collapse. Standard CFM achieved 5/5 mode coverage with 72.6% hit rate, while Iso-FM w=4.0 achieved 0/5 coverage with 0.1% hit rate (W=10.2 vs 0.5). 
+
+Reducing the regularization weight revealed a sharp transition: w=1.0 improved to W=2.0 but still failed mode coverage (9% hit rate). **w=0.5 recovered full 5/5 coverage** with improved smoothness metrics: trajectory acceleration reduced 76% (0.079 vs 0.331), path straightness improved (1.004 vs 1.135), at the cost of slightly lower hit rate (52% vs 73%) and modest Wasserstein increase (0.73 vs 0.51).
+
+This demonstrates the central tension: uniform residual suppression can improve trajectory smoothness but requires careful weight tuning to avoid over-constraining mode commitment in independent-pairing multimodal transport. The sharp weight sensitivity (collapse at w=1.0, success at w=0.5) suggests this benchmark successfully exposes the fragility predicted by the hypothesis.
