@@ -6,12 +6,14 @@
     "radius": 6.0,
     "sigma_mode": 0.2
   },
-  "method": "weighted_material_residual",
+  "method": "directional_regularization_cfm",
   "method_kwargs": {
-    "weight": 0.1,
-    "weighting": "variance_gate",
-    "k_neighbours": 8,
-    "kappa": 1.0
+    "weight": 0.5,
+    "weighting": "uniform",
+    "residual_loss": "fd_iso",
+    "epsilon": 0.05,
+    "alpha": 2.0,
+    "zeta": 0.001
   },
   "model": "mlp",
   "seed": 42,
@@ -32,5 +34,5 @@
     "hit_radius": 0.6,
     "eval_seed": 1234
   },
-  "run_name": "five_modes_variance_gate"
+  "run_name": "five_modes_fd_uniform"
 }

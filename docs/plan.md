@@ -159,20 +159,20 @@ but:
 
 > Can we reduce the part of $R_\theta$ that is numerically harmful for coarse integration, while avoiding strong penalties where acceleration is required by conditional ambiguity?
 
-## Proposed Stabilized Objective
+## Directional-Regularization CFM
 
-We propose a weighted material-residual penalty:
+The current working method is Directional-Regularization CFM: a flow-matching objective with a material-residual penalty weighted by how quickly the learned velocity changes along its own direction.
 
 $$
-\mathcal{L}_{stab}
+\mathcal{L}_{DR\text{-}CFM}
 =
+\mathcal{L}_{FM}
++
 \lambda
 \,
 \mathbb{E}_{x,t}
 \left[
-w_{\mathrm{solver}}(x,t)
-\,
-g_{\mathrm{unc}}(x,t)
+w_{\mathrm{dir}}(x,t)
 \,
 \|R_\theta(x,t)\|^2
 \right].
@@ -180,8 +180,7 @@ $$
 
 Here:
 
-- $w_{\mathrm{solver}}$ emphasizes residuals that are likely to hurt low-NFE integration.
-- $g_{\mathrm{unc}}$ suppresses the penalty where conditional velocity uncertainty is high.
+- $w_{\mathrm{dir}}$ emphasizes regions where the velocity field changes sharply along the generated trajectory direction.
 - $\lambda$ is the global regularization strength.
 
 This replaces the earlier shorthand
@@ -190,17 +189,15 @@ $$
 \tau(x,t)\|R_\theta(x,t)\|^2
 $$
 
-with a more explicit decomposition:
+with a directly interpretable directional weighting:
 
 $$
 \tau(x,t)
 =
-w_{\mathrm{solver}}(x,t)
-\,
-g_{\mathrm{unc}}(x,t).
+w_{\mathrm{dir}}(x,t).
 $$
 
-## Solver-Aware Weighting
+## Directional Weighting
 
 ### The Caveat
 
@@ -217,10 +214,10 @@ This expression should not be described as a weight that simply "grows when the 
 
 That behavior can be reasonable for a SUPG-style stabilization parameter, where $\tau$ often behaves like a local time scale. But it is not the same thing as a risk-amplifying loss weight.
 
-We should separate two concepts:
+We separate two concepts:
 
 1. A **SUPG-style time scale** that normalizes residual stabilization.
-2. A **solver-risk weight** that increases when the local coarse-step error is expected to be large.
+2. A **directional weight** that increases when the field changes rapidly along the learned flow direction.
 
 ### Local CFL Proxy
 
@@ -246,7 +243,7 @@ L_{\mathrm{dir}}(x,t)
 }.
 $$
 
-Then a dimensionless coarse-step risk proxy is
+Then a dimensionless directional-change proxy is
 
 $$
 C_\theta(x,t)
@@ -277,14 +274,14 @@ $$
 
 or if we derive a residual-based stabilization term that needs a local time-scale coefficient.
 
-### Option B: Solver-Risk Weight
+### Option B: Directional Weight
 
-If our goal is to penalize residuals more where coarse inference is expected to fail, then the weight should increase with $C_\theta$.
+If our goal is to penalize residuals more where the learned trajectory direction crosses rapidly changing velocity regions, then the weight should increase with $C_\theta$.
 
 A bounded monotone choice is
 
 $$
-w_{\mathrm{solver}}(x,t)
+w_{\mathrm{dir}}(x,t)
 =
 \Delta t_{\mathrm{infer}}^2
 \,
@@ -303,13 +300,13 @@ This is currently the cleaner default for the paper narrative because it directl
 We should compare both options experimentally:
 
 - **SUPG-scale residual:** $\|\tau_{\mathrm{SUPG}} R_\theta\|^2$
-- **CFL-risk residual:** $w_{\mathrm{solver}}\|R_\theta\|^2$
+- **Directional residual:** $w_{\mathrm{dir}}\|R_\theta\|^2$
 
 If only one survives, the paper should use the surviving version and describe the other as an ablation.
 
-## Uncertainty-Aware Gate
+## Shelved: Uncertainty-Aware Gate
 
-The uncertainty gate should reduce regularization where the conditional transport is ambiguous:
+The uncertainty gate was considered as a way to reduce regularization where the conditional transport is ambiguous:
 
 $$
 g_{\mathrm{unc}}(x,t)
@@ -333,19 +330,9 @@ Low variance means the local transport direction is already resolved:
 - residual regularization is strong,
 - acceleration is treated as likely numerical roughness rather than necessary mode commitment.
 
-### First Practical Gate
+### Practical Data-Dependent Gate
 
-The simplest first implementation is a time-only gate:
-
-$$
-g_{\mathrm{unc}}(t)=t^\beta.
-$$
-
-This assumes early time is more ambiguous and late time is more resolved. It is useful as a controlled ablation, but it is weak as a final scientific claim because it is hand-shaped.
-
-### Stronger Scientific Gate
-
-A stronger version should estimate local uncertainty from data:
+Possible estimators included:
 
 - nearest-neighbor velocity variance around $x_t$,
 - minibatch kernel-weighted velocity variance,
@@ -353,7 +340,7 @@ A stronger version should estimate local uncertainty from data:
 - ensemble or dropout disagreement,
 - learned auxiliary uncertainty head.
 
-The paper should prefer a measurable uncertainty proxy if it improves over the time-only gate.
+The implemented prototypes used minibatch k-nearest-neighbor and kernel estimates in joint $(x_t,t)$ space. On the current five-mode benchmark they mostly weakened useful regularization and did not improve mode capture, so this branch is shelved until a benchmark clearly needs ambiguity-aware regularization.
 
 ## Final Candidate Losses
 
@@ -368,9 +355,7 @@ $$
 \,
 \mathbb{E}_{x,t}
 \left[
-w_{\mathrm{solver}}(x,t)
-\,
-g_{\mathrm{unc}}(x,t)
+w_{\mathrm{dir}}(x,t)
 \,
 \frac{\|R_\theta(x,t)\|^2}{\|v_\theta(x,t)\|^2+\zeta}
 \right].
@@ -383,9 +368,7 @@ Minimum variants:
 1. **Standard CFM:** no residual regularization.
 2. **Uniform residual:** $\|R_\theta\|^2$.
 3. **LC finite difference / Iso-FM-style:** semi-Lagrangian finite-difference residual proxy.
-4. **Solver-risk residual:** $w_{\mathrm{solver}}\|R_\theta\|^2$.
-5. **Uncertainty-gated residual:** $g_{\mathrm{unc}}\|R_\theta\|^2$.
-6. **Full method:** $w_{\mathrm{solver}}g_{\mathrm{unc}}\|R_\theta\|^2$.
+4. **Directional-regularized residual:** $w_{\mathrm{dir}}\|R_\theta\|^2$.
 
 ## Paper Narrative
 
@@ -396,9 +379,8 @@ The writeup should proceed in this order:
 3. Derive the material residual by the chain rule.
 4. Connect the residual to the leading low-NFE Euler truncation error.
 5. Explain why uniform residual suppression is too strong for multimodal generative transport.
-6. Introduce solver-aware weighting using a local CFL/stiffness proxy.
-7. Introduce uncertainty-aware gating using conditional velocity variance.
-8. Treat LC finite difference and Iso-FM as close acceleration-regularization baselines.
+6. Introduce directional weighting using local velocity change along the learned flow direction.
+7. Treat LC finite difference and Iso-FM as close acceleration-regularization baselines.
 
 The intended claim is:
 
@@ -408,7 +390,7 @@ The intended claim is:
 
 The first benchmark should expose both sides of the idea:
 
-- solver fragility under coarse inference,
+- coarse-step fragility under low-NFE inference,
 - early-time or multimodal ambiguity where uniform acceleration suppression may over-constrain.
 
 Useful metrics:
@@ -418,7 +400,7 @@ Useful metrics:
 - trajectory acceleration / material residual,
 - path length ratio,
 - mode coverage or mode assignment accuracy on multimodal toy data,
-- sensitivity to regularization strength and uncertainty-gate strength.
+- sensitivity to regularization strength and directional approximation.
 
 ## Baselines
 
@@ -429,9 +411,7 @@ Required initial baselines:
 - Iso-FM-faithful finite-difference loss if its weighting/normalization differs materially
 - JVP material-derivative penalty
 - SUPG-scale residual
-- CFL-risk residual without uncertainty gate
-- uncertainty-gated residual without solver-risk weighting
-- full proposed solver-risk plus uncertainty gate
+- Directional-Regularization CFM
 
 Later baselines:
 
@@ -448,8 +428,8 @@ This direction is worth developing only if it can show at least one of the follo
 - better few-step generation than strong acceleration-regularization baselines,
 - less over-smoothing or better mode coverage than uniform material-derivative suppression,
 - improved stability on autoregressive or PDE-like tasks,
-- a clear solver-aware explanation that predicts when the regularizer should help,
-- a meaningful ablation showing that solver weighting and uncertainty gating contribute differently.
+- a clear directional-regularization explanation that predicts when the regularizer should help,
+- a meaningful ablation showing whether directional weighting contributes beyond Iso-FD.
 
 ## Paper Figure: Regularization Components on Five-Mode Benchmark
 
@@ -461,7 +441,7 @@ A planned figure for the paper showing the effect of each regularization compone
 
 **Panel 2 — Uniform material residual (λ‖R‖²):** shows that naive uniform suppression over-straightens trajectories and damages hit rate at the same λ. The over-regularized anchor (λ=10, 0/5 coverage, accel≈0) is already in hand.
 
-**Panel 3 — Variance-gate (λ · g_unc · ‖R‖²):** shows that spatial uncertainty gating recovers mode coverage while still reducing acceleration.
+**Panel 3 — Directional-Regularization CFM:** tests whether directional weighting can improve coarse-step sampling beyond uniform Iso-FD-style regularization.
 
 
 ### Design notes
@@ -470,4 +450,3 @@ A planned figure for the paper showing the effect of each regularization compone
 - Panels should be small (~3×3 inches) to fit as a grid in a paper column.
 - Fixed eval seed across all panels for directly comparable sample clouds.
 - The λ=10 uniform run can serve as the "over-regularized" anchor.
-

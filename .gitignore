@@ -35,7 +35,7 @@ env.bak/
 venv.bak/
 
 # Experiment outputs
-runs/
+/runs
 
 # IDEs / Editors
 .vscode/

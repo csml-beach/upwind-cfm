@@ -24,6 +24,16 @@ def material_derivative_jvp(model, x, t, velocity=None):
     return material
 
 
+def spatial_directional_jvp(model, x, t, velocity):
+    """Compute (velocity dot grad_x) v(x,t) with a JVP in x only."""
+    _, convective = torch.autograd.functional.jvp(
+        lambda x_in: model(x_in, t),
+        x,
+        velocity.detach(),
+        create_graph=False,
+    )
+    return convective
+
 
 class Method:
     min_t = 0.0
@@ -105,23 +115,37 @@ class LagrangianConsistencyJVP(Method):
         return {"cfm": cfm, "lc_jvp": self.weight * torch.mean(material.pow(2))}
 
 
-@register(METHODS, "weighted_material_residual")
-class WeightedMaterialResidual(Method):
-    """Material-derivative residual penalty with time-only gate.
+@register(METHODS, "directional_regularization_cfm")
+class DirectionalRegularizationCFM(Method):
+    """CFM with optional directional regularization.
 
-    weighting options
-    -----------------
-    "uniform"    λ ‖R‖²          (ablation: no gating)
-    "time_gate"  λ t^β ‖R‖²     (suppress penalty at early t where ambiguity is high)
+    residual_loss selects how the material residual is approximated:
+    "l2"      squared JVP material derivative
+    "iso_l1"  Iso-style normalized L1 JVP material derivative
+    "fd_iso"  Iso-style forward finite-difference residual
+
+    directional_approx selects how the directional change weight is estimated:
+    "jvp"  directional JVP of the learned velocity
+    "fd"   forward finite difference of the learned velocity
     """
 
     def __init__(self, config):
         super().__init__(config)
         self.weight = config.get("weight", 1.0)
-        self.weighting = config.get("weighting", "time_gate")
-        self.beta = config.get("beta", 1.0)
-        self.k_neighbours = config.get("k_neighbours", 8)
-        self.kappa = config.get("kappa", 1.0)
+        self.weighting = config.get("weighting", "uniform")
+        self.directional_dt = config.get("directional_dt", 0.2)
+        self.epsilon = config.get("epsilon", self.dt)
+        self.normalize_residual = config.get("normalize_residual", False)
+        self.residual_loss = config.get("residual_loss", "l2")
+        self.directional_approx = config.get("directional_approx", "jvp")
+        self.alpha = config.get("alpha", 2.0)
+        self.zeta = config.get("zeta", 1e-4)
+
+    def sample_t(self, batch_size, device):
+        if self.residual_loss == "fd_iso":
+            max_t = 1.0 - self.epsilon
+            return torch.rand(batch_size, 1, device=device) * max_t
+        return super().sample_t(batch_size, device)
 
     def loss(self, model, x0, x1):
         t = self.sample_t(x0.shape[0], x0.device)
@@ -131,33 +155,59 @@ class WeightedMaterialResidual(Method):
         vt = model(xt, t_g)
         cfm = F.mse_loss(vt, target)
 
-        material = material_derivative_jvp(model, xt, t_g, vt)
-        residual_sq = material.pow(2).sum(dim=1, keepdim=True)
+        if self.residual_loss == "fd_iso":
+            residual = self._fd_iso_penalty(model, xt, t_g, vt)
+        else:
+            material = material_derivative_jvp(model, xt, t_g, vt)
+            residual = self._residual_penalty(material, vt.detach(), t)
 
         if self.weighting == "uniform":
             w = torch.ones(t.shape[0], 1, device=t.device)
-        elif self.weighting == "time_gate":
-            w = t.pow(self.beta)
-        elif self.weighting == "variance_gate":
-            w = self._variance_gate(xt.detach(), x1 - x0)
+        elif self.weighting == "directional":
+            w = self._directional_weight(model, xt.detach(), t.detach(), vt.detach())
         else:
             raise ValueError(f"Unknown weighting: {self.weighting!r}")
 
-        reg = torch.mean(w * residual_sq)
+        reg = torch.mean(w * residual)
         return {"cfm": cfm, "wmr": self.weight * reg}
 
-    def _variance_gate(self, xt, u):
-        """g(x_t) = 1 / (1 + kappa * Var[u | x_t]) estimated via k-NN in minibatch."""
-        # pairwise squared distances in x_t space
-        diff = xt.unsqueeze(1) - xt.unsqueeze(0)          # (B, B, D)
-        dist2 = diff.pow(2).sum(dim=2)                     # (B, B)
-        # exclude self by setting diagonal to large value
-        dist2 = dist2 + torch.eye(xt.shape[0], device=xt.device) * 1e9
-        # k nearest neighbours
-        _, idx = dist2.topk(self.k_neighbours, dim=1, largest=False)  # (B, k)
-        u_nn = u[idx]                                      # (B, k, D)
-        var = u_nn.var(dim=1).mean(dim=1, keepdim=True)   # (B, 1)
-        return (1.0 / (1.0 + self.kappa * var.detach()))
+    def _fd_iso_penalty(self, model, xt, t, vt):
+        x_next = xt + vt.detach() * self.epsilon
+        t_next = t + self.epsilon
+        vt_next = model(x_next, t_next).detach()
+        speed = torch.linalg.vector_norm(vt.detach(), dim=1, keepdim=True) + self.zeta
+        temporal_weight = (1.0 - t).pow(self.alpha) / self.epsilon
+        return temporal_weight * torch.sum(torch.abs((vt - vt_next) / speed), dim=1, keepdim=True)
+
+    def _residual_penalty(self, material, velocity, t):
+        if self.residual_loss == "l2":
+            residual = material.pow(2).sum(dim=1, keepdim=True)
+            if self.normalize_residual:
+                speed_sq = velocity.pow(2).sum(dim=1, keepdim=True)
+                residual = residual / (speed_sq + self.zeta)
+            return residual
+        if self.residual_loss == "iso_l1":
+            speed = torch.linalg.vector_norm(velocity, dim=1, keepdim=True) + self.zeta
+            residual = torch.sum(torch.abs(material / speed), dim=1, keepdim=True)
+            return (1.0 - t).pow(self.alpha) * residual
+        raise ValueError(f"Unknown residual_loss: {self.residual_loss!r}")
+
+    def _directional_weight(self, model, xt, t, vt):
+        """Bounded weight based on velocity change along the learned direction."""
+        if self.directional_approx == "jvp":
+            directional_change = spatial_directional_jvp(model, xt, t, vt).detach()
+        elif self.directional_approx == "fd":
+            x_next = xt + vt * self.epsilon
+            vt_next = model(x_next, t).detach()
+            directional_change = (vt_next - vt) / self.epsilon
+        else:
+            raise ValueError(f"Unknown directional_approx: {self.directional_approx!r}")
+
+        speed = torch.linalg.vector_norm(vt, dim=1, keepdim=True).clamp_min(self.zeta)
+        local_scale = torch.linalg.vector_norm(directional_change, dim=1, keepdim=True) / speed
+        directional_number = self.directional_dt * local_scale
+        weight = directional_number.pow(2) / (1.0 + directional_number.pow(2))
+        return (self.directional_dt**2) * weight
 
 
 def build_method(name, config):

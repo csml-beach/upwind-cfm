@@ -269,10 +269,17 @@ def _draw_five_mode_panel(
             bbox={"boxstyle": "round,pad=0.25", "facecolor": "white", "edgecolor": "#e5e7eb", "alpha": 0.86},
         )
     ax.set_aspect("equal", adjustable="box")
-    ax.set_xlim(-7.5, 7.5)
-    ax.set_ylim(-7.5, 7.5)
-    ax.set_xticks([-6, -3, 0, 3, 6])
-    ax.set_yticks([-6, -3, 0, 3, 6])
+    axis_limit = max(7.5, float(centers.abs().max().cpu()) + 1.5)
+    tick_extent = int(axis_limit // 2 * 2)
+    tick_step = 4 if tick_extent >= 8 else 3
+    ticks = list(range(-tick_extent, tick_extent + 1, tick_step))
+    if 0 not in ticks:
+        ticks.append(0)
+        ticks.sort()
+    ax.set_xlim(-axis_limit, axis_limit)
+    ax.set_ylim(-axis_limit, axis_limit)
+    ax.set_xticks(ticks)
+    ax.set_yticks(ticks)
     ax.tick_params(labelsize=8, colors="#4b5563", length=3)
     for spine in ax.spines.values():
         spine.set_color("#d1d5db")

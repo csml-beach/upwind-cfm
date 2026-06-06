@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This benchmark is designed to test the central claim of uncertainty-aware streamline stabilization:
+This benchmark is designed to test the central claim of Directional-Regularization CFM:
 
 > Uniform material-residual suppression may improve smoothness, but it can over-constrain multimodal transport. A useful method should improve coarse-step sampling while preserving mode coverage.
 
@@ -42,7 +42,7 @@ Initial defaults:
 - independent source-target pairing
 - no minibatch OT pairing in the first benchmark
 
-Independent pairing is important because it creates genuine multimodal ambiguity in the marginal velocity field. The benchmark should not be simplified by using OT pairing before we understand whether the uncertainty gate is useful.
+Independent pairing is important because it creates genuine multimodal ambiguity in the marginal velocity field. The benchmark should not be simplified by using OT pairing before we understand whether directional regularization is useful.
 
 ## Training Path
 
@@ -71,9 +71,10 @@ Start with a deliberately small set:
 1. **Standard CFM**
 2. **Iso-FM-style finite difference**
 3. **Uniform JVP material residual**
-4. **Time-gated material residual**
-5. **Solver-risk material residual**
-6. **Solver-risk plus uncertainty-gated material residual**
+4. **Uniform FD residual**
+5. **Directional-Regularization CFM with FD residual and JVP directional weight**
+6. **Directional-Regularization CFM with FD residual and FD directional weight**
+7. **Directional-Regularization CFM with JVP residual and JVP directional weight**
 
 Do not include WENO, Hessian/jerk regularization, Burgers, Reflow, or Consistency Flow Matching in this first benchmark. Those are later-stage comparisons once this diagnostic is understood.
 
@@ -198,11 +199,11 @@ Initial default:
 
 ## Evidence That Supports The Idea
 
-The uncertainty-aware method is promising if it:
+Directional-Regularization CFM is promising if it:
 
 - improves or matches final distribution quality against Standard CFM,
 - improves low-NFE behavior against uniform material-residual regularization,
-- preserves better hit coverage and target hit rate than uniform residual suppression,
+- preserves coverage and target hit rate relative to Iso-FD,
 - reduces trajectory acceleration enough to explain improved coarse-step sampling,
 - does not only win by making trajectories smooth while collapsing modes.
 
@@ -210,10 +211,10 @@ The uncertainty-aware method is promising if it:
 
 The idea is in trouble if:
 
-- uniform residual regularization dominates all uncertainty-aware variants,
-- the uncertainty gate improves mode coverage only by removing useful stabilization,
+- uniform residual regularization dominates all directional-regularization variants,
+- directional weighting only shifts probability mass between modes without improving distribution quality,
 - target hit rate remains poor despite lower acceleration,
-- the method is highly sensitive to gate strength or regularization weight,
+- the method is highly sensitive to regularization weight,
 - gains disappear across random seeds.
 
 ## First Implementation Target

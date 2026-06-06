@@ -1,0 +1,34 @@
+{
+  "dataset": "five_modes",
+  "dataset_kwargs": {
+    "n_train": 5000,
+    "n_test": 2000,
+    "radius": 4.0,
+    "sigma_mode": 0.2
+  },
+  "method": "iso_fm_finite_difference",
+  "method_kwargs": {
+    "weight": 4.0,
+    "epsilon": 0.05,
+    "alpha": 2.0
+  },
+  "model": "mlp",
+  "seed": 42,
+  "solver": "euler",
+  "solver_kwargs": {
+    "steps": 5,
+    "noise": 0.0
+  },
+  "train": {
+    "batch_size": 128,
+    "epochs": 1500,
+    "log_every": 50,
+    "lr": 0.001
+  },
+  "eval": {
+    "n_eval": 1000,
+    "mode_p_min": 0.05,
+    "hit_radius": 0.6
+  },
+  "run_name": "five_modes_iso_fd"
+}
