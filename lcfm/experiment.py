@@ -9,6 +9,8 @@ from . import models  # noqa: F401
 from . import solvers  # noqa: F401
 from .losses import build_method
 from .metrics import (
+    mean_endpoint_displacement,
+    mean_path_length,
     mode_statistics,
     path_length_ratio,
     rmse,
@@ -59,6 +61,8 @@ def eval_spiral(problem, model, config, device):
     traj = solve(config.get("solver", "euler"), model, x0, config.get("solver_kwargs", {"steps": 15}))
     return {
         "wasserstein": wasserstein_match(traj[-1], target),
+        "mean_path_length": mean_path_length(traj),
+        "mean_endpoint_displacement": mean_endpoint_displacement(traj),
         "path_length_ratio": path_length_ratio(traj),
         "trajectory_acceleration": trajectory_acceleration(traj),
     }
@@ -75,6 +79,8 @@ def eval_five_modes(problem, model, config, device):
     traj = solve(config.get("solver", "euler"), model, x0, config.get("solver_kwargs", {"steps": 5}))
     metrics = {
         "wasserstein": wasserstein_match(traj[-1], target),
+        "mean_path_length": mean_path_length(traj),
+        "mean_endpoint_displacement": mean_endpoint_displacement(traj),
         "path_length_ratio": path_length_ratio(traj),
         "trajectory_acceleration": trajectory_acceleration(traj),
     }
@@ -113,7 +119,7 @@ def eval_burgers_autoregressive(problem, model, config, device):
 def evaluate(problem, model, config, device):
     if problem.name == "spiral":
         return eval_spiral(problem, model, config, device)
-    if problem.name == "five_modes":
+    if hasattr(problem, "centers") and hasattr(problem, "sigma_mode"):
         return eval_five_modes(problem, model, config, device)
     if problem.name == "burgers_autoregressive":
         return eval_burgers_autoregressive(problem, model, config, device)

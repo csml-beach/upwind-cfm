@@ -38,6 +38,8 @@ The older flattened Burgers surface-generation task should not be used for new c
 - `standard_cfm`: baseline CFM regression loss.
 - `lc_finite_difference`: backward-characteristic finite-difference Lagrangian consistency.
 - `lc_jvp_material_derivative`: analytic material-derivative penalty using a Jacobian-vector product.
+- `iso_fm_finite_difference`: forward Iso-FM-style Jacobian-free material-residual baseline.
+- `directional_regularization_cfm`: Iso-FD-style residual weighted by a local directional solver-risk proxy. The first implemented variant uses finite differences for both residual and directional weight.
 
 ## Registered Solvers
 

@@ -21,6 +21,10 @@ from .utils import read_json, set_seed
 MODE_COLORS = ["#2563eb", "#dc2626", "#16a34a", "#9333ea", "#f59e0b"]
 
 
+def is_mode_problem(problem):
+    return hasattr(problem, "centers") and hasattr(problem, "sigma_mode")
+
+
 def load_run(run_dir, device):
     run_dir = Path(run_dir)
     config = read_json(run_dir / "config.json")
@@ -177,9 +181,8 @@ def _draw_five_mode_panel(
     trajectory_width=0.55,
 ):
     final = traj[-1]
-    if n_final is not None:
-        final = final[:n_final]
-    assignments = _mode_assignments(final, centers)
+    plotted_final = final[:n_final] if n_final is not None else final
+    assignments = _mode_assignments(plotted_final, centers)
     colors = MODE_COLORS[: centers.shape[0]]
 
     ax.set_facecolor("#fbfbfa")
@@ -226,7 +229,7 @@ def _draw_five_mode_panel(
     for mode, color in enumerate(colors):
         mask = assignments == mode
         if mask.any():
-            pts = final[mask]
+            pts = plotted_final[mask]
             ax.scatter(
                 pts[:, 0].cpu(),
                 pts[:, 1].cpu(),
@@ -269,10 +272,21 @@ def _draw_five_mode_panel(
             bbox={"boxstyle": "round,pad=0.25", "facecolor": "white", "edgecolor": "#e5e7eb", "alpha": 0.86},
         )
     ax.set_aspect("equal", adjustable="box")
-    ax.set_xlim(-7.5, 7.5)
-    ax.set_ylim(-7.5, 7.5)
-    ax.set_xticks([-6, -3, 0, 3, 6])
-    ax.set_yticks([-6, -3, 0, 3, 6])
+    all_points = torch.cat(
+        [
+            target.detach().cpu(),
+            plotted_final.detach().cpu(),
+            traj.detach().cpu().reshape(-1, traj.shape[-1]),
+            centers.detach().cpu(),
+        ],
+        dim=0,
+    )
+    mins = all_points.min(dim=0).values
+    maxs = all_points.max(dim=0).values
+    spans = (maxs - mins).clamp_min(1.0)
+    pad = torch.clamp(0.08 * spans, min=4.0 * sigma_mode)
+    ax.set_xlim(float(mins[0] - pad[0]), float(maxs[0] + pad[0]))
+    ax.set_ylim(float(mins[1] - pad[1]), float(maxs[1] + pad[1]))
     ax.tick_params(labelsize=8, colors="#4b5563", length=3)
     for spine in ax.spines.values():
         spine.set_color("#d1d5db")
@@ -293,8 +307,8 @@ def plot_five_modes_run(
 ):
     device = torch.device("cpu")
     config, problem, model = load_run(run_dir, device)
-    if problem.name != "five_modes":
-        raise ValueError(f"plot_five_modes_run only supports five_modes runs, got {problem.name}")
+    if not is_mode_problem(problem):
+        raise ValueError(f"plot_five_modes_run only supports mode-mixture runs, got {problem.name}")
     x0, target = eval_inputs(problem, config, device, eval_seed)
     traj = spiral_trajectory(model, x0, config, eval_seed, steps, noise)
 
@@ -337,15 +351,18 @@ def plot_five_modes_comparison(
     device = torch.device("cpu")
     loaded = [load_run(run_dir, device) for run_dir in run_dirs]
     first_config, first_problem, _ = loaded[0]
-    if first_problem.name != "five_modes":
-        raise ValueError("plot_five_modes_comparison currently only supports five_modes runs")
+    if not is_mode_problem(first_problem):
+        raise ValueError("plot_five_modes_comparison currently only supports mode-mixture runs")
     x0, target = eval_inputs(first_problem, first_config, device, eval_seed)
 
     fig, axes = plt.subplots(1, len(loaded), figsize=(4.8 * len(loaded), 4.9), squeeze=False)
+    axis_bounds = []
     for ax, run_dir, loaded_item in zip(axes[0], run_dirs, loaded):
         config, problem, model = loaded_item
-        if problem.name != "five_modes":
-            raise ValueError(f"comparison only supports five_modes runs, got {problem.name}")
+        if problem.name != first_problem.name:
+            raise ValueError(f"comparison mixes {first_problem.name} and {problem.name} runs")
+        if not is_mode_problem(problem):
+            raise ValueError(f"comparison only supports mode-mixture runs, got {problem.name}")
         traj = spiral_trajectory(model, x0, config, eval_seed, steps, noise)
         metrics_path = Path(run_dir) / "metrics.json"
         metrics = read_json(metrics_path) if metrics_path.exists() else None
@@ -362,6 +379,14 @@ def plot_five_modes_comparison(
             trajectory_alpha=trajectory_alpha,
             trajectory_width=trajectory_width,
         )
+        axis_bounds.append((*ax.get_xlim(), *ax.get_ylim()))
+    x_min = min(bounds[0] for bounds in axis_bounds)
+    x_max = max(bounds[1] for bounds in axis_bounds)
+    y_min = min(bounds[2] for bounds in axis_bounds)
+    y_max = max(bounds[3] for bounds in axis_bounds)
+    for ax in axes[0]:
+        ax.set_xlim(x_min, x_max)
+        ax.set_ylim(y_min, y_max)
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout(pad=0.6, w_pad=0.7)

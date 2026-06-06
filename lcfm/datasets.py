@@ -82,6 +82,71 @@ class FiveModesProblem:
         return self.mode_centers.to(device)
 
 
+class FanModesProblem:
+    name = "fan_modes"
+    dim = 2
+
+    def __init__(self, config):
+        self.n_train = config.get("n_train", 5000)
+        self.n_test = config.get("n_test", 2000)
+        self.sigma_mode = config.get("sigma_mode", 0.20)
+        self.source_mean = torch.tensor(config.get("source_mean", [-8.0, 0.0]), dtype=torch.float32)
+        self.source_std = config.get("source_std", 1.0)
+        self.mode_centers = self._make_centers(config)
+        self.n_modes = self.mode_centers.shape[0]
+        self.train = self._sample_modes(self.n_train)
+        self.test = self._sample_modes(self.n_test)
+
+    def _make_centers(self, config):
+        if "target_centers" in config:
+            centers = torch.tensor(config["target_centers"], dtype=torch.float32)
+            if centers.ndim != 2 or centers.shape[1] != self.dim:
+                raise ValueError("target_centers must have shape [n_modes, 2].")
+            return centers
+
+        target_x = config.get("target_x", 4.5)
+        target_ys = torch.tensor(config.get("target_ys", [-4.0, -2.0, 0.0, 2.0, 4.0]), dtype=torch.float32)
+        fan_curve = config.get("fan_curve", 1.0)
+        max_abs_y = torch.max(torch.abs(target_ys)).clamp_min(1.0)
+        x = target_x + fan_curve * (1.0 - torch.abs(target_ys) / max_abs_y)
+        return torch.stack([x, target_ys], dim=1)
+
+    def _source_std_tensor(self, device):
+        return torch.as_tensor(self.source_std, dtype=torch.float32, device=device).reshape(-1)
+
+    def _sample_source(self, n_samples, device):
+        mean = self.source_mean.to(device)
+        std = self._source_std_tensor(device)
+        if std.numel() == 1:
+            return mean + std.item() * torch.randn(n_samples, self.dim, device=device)
+        if std.numel() != self.dim:
+            raise ValueError("source_std must be a scalar or length-2 sequence.")
+        return mean + torch.randn(n_samples, self.dim, device=device) * std
+
+    def _sample_modes(self, n_samples):
+        mode_idx = torch.randint(self.n_modes, (n_samples,))
+        centers = self.mode_centers[mode_idx]
+        return centers + self.sigma_mode * torch.randn(n_samples, self.dim)
+
+    def sample_train_batch(self, batch_size, device):
+        idx = torch.randint(self.train.shape[0], (batch_size,))
+        x1 = self.train[idx].to(device)
+        x0 = self._sample_source(batch_size, device)
+        return x0, x1
+
+    def eval_initial(self, n_eval, device):
+        return self._sample_source(n_eval, device)
+
+    def target_eval(self, n_eval, device):
+        if n_eval <= self.test.shape[0]:
+            return self.test[:n_eval].to(device)
+        idx = torch.randint(self.test.shape[0], (n_eval,))
+        return self.test[idx].to(device)
+
+    def centers(self, device):
+        return self.mode_centers.to(device)
+
+
 def burgers_rhs(u, t, dx, nu):
     u_x = (np.roll(u, -1) - np.roll(u, 1)) / (2 * dx)
     u_xx = (np.roll(u, -1) - 2 * u + np.roll(u, 1)) / (dx**2)
@@ -132,4 +197,5 @@ class BurgersAutoregressiveProblem:
 
 register(DATASETS, "spiral")(SpiralProblem)
 register(DATASETS, "five_modes")(FiveModesProblem)
+register(DATASETS, "fan_modes")(FanModesProblem)
 register(DATASETS, "burgers_autoregressive")(BurgersAutoregressiveProblem)

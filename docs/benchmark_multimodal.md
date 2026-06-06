@@ -234,3 +234,9 @@ Keep this benchmark small, fast, and reproducible. It is a diagnostic, not the f
 Reducing the regularization weight revealed a sharp transition: w=1.0 improved to W=2.0 but still failed mode coverage (9% hit rate). **w=0.5 recovered full 5/5 coverage** with improved smoothness metrics: trajectory acceleration reduced 76% (0.079 vs 0.331), path straightness improved (1.004 vs 1.135), at the cost of slightly lower hit rate (52% vs 73%) and modest Wasserstein increase (0.73 vs 0.51).
 
 This demonstrates the central tension: uniform residual suppression can improve trajectory smoothness but requires careful weight tuning to avoid over-constraining mode commitment in independent-pairing multimodal transport. The sharp weight sensitivity (collapse at w=1.0, success at w=0.5) suggests this benchmark successfully exposes the fragility predicted by the hypothesis.
+
+## Asymmetric Follow-Up
+
+The centered five-mode setup is intentionally simple, but its radial symmetry can make distinct regularizers look too similar. The next diagnostic benchmark is `fan_modes`, documented in `docs/benchmark_fan_modes.md`.
+
+`fan_modes` moves the source prior to the left of a right-side five-mode fan. This creates a coherent transport direction before branching, making it a sharper test for directional or CFL-motivated regularization than the centered case.

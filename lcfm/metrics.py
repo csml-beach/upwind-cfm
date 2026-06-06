@@ -19,6 +19,17 @@ def path_length_ratio(traj):
     return float((path_lengths / (straight + 1e-6)).mean().item())
 
 
+def mean_path_length(traj):
+    diffs = traj[1:] - traj[:-1]
+    path_lengths = torch.norm(diffs, dim=-1).sum(dim=0)
+    return float(path_lengths.mean().item())
+
+
+def mean_endpoint_displacement(traj):
+    displacement = torch.norm(traj[-1] - traj[0], dim=-1)
+    return float(displacement.mean().item())
+
+
 def trajectory_acceleration(traj):
     if traj.shape[0] < 3:
         return 0.0

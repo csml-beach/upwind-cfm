@@ -1,0 +1,38 @@
+{
+  "dataset": "fan_modes",
+  "dataset_kwargs": {
+    "n_train": 256,
+    "n_test": 128,
+    "source_mean": [-8.0, 0.0],
+    "source_std": 1.0,
+    "target_centers": [[4.0, -4.0], [5.0, -2.0], [5.5, 0.0], [5.0, 2.0], [4.0, 4.0]],
+    "sigma_mode": 0.2
+  },
+  "method": "iso_fm_finite_difference",
+  "method_kwargs": {
+    "weight": 4.0,
+    "epsilon": 0.05,
+    "alpha": 2.0,
+    "zeta": 0.001
+  },
+  "model": "mlp",
+  "seed": 42,
+  "solver": "euler",
+  "solver_kwargs": {
+    "steps": 5,
+    "noise": 0.0
+  },
+  "train": {
+    "batch_size": 64,
+    "epochs": 5,
+    "log_every": 1,
+    "lr": 0.001
+  },
+  "eval": {
+    "n_eval": 128,
+    "mode_p_min": 0.05,
+    "hit_radius": 0.6,
+    "plot_seed": 1234
+  },
+  "run_name": "smoke_fan_modes_iso_fd"
+}

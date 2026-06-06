@@ -1,0 +1,35 @@
+{
+  "dataset": "fan_modes",
+  "dataset_kwargs": {
+    "n_train": 5000,
+    "n_test": 2000,
+    "source_mean": [-8.0, 0.0],
+    "source_std": 1.0,
+    "target_centers": [[4.0, -4.0], [5.0, -2.0], [5.5, 0.0], [5.0, 2.0], [4.0, 4.0]],
+    "sigma_mode": 0.2
+  },
+  "method": "lc_jvp_material_derivative",
+  "method_kwargs": {
+    "weight": 1.0
+  },
+  "model": "mlp",
+  "seed": 42,
+  "solver": "euler",
+  "solver_kwargs": {
+    "steps": 5,
+    "noise": 0.0
+  },
+  "train": {
+    "batch_size": 256,
+    "epochs": 2000,
+    "log_every": 200,
+    "lr": 0.001
+  },
+  "eval": {
+    "n_eval": 1000,
+    "mode_p_min": 0.05,
+    "hit_radius": 0.6,
+    "plot_seed": 1234
+  },
+  "run_name": "fan_modes_lc_jvp_w1"
+}

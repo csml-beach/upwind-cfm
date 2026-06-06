@@ -56,6 +56,12 @@ def row_from_run(root, metrics_path):
         "lr": get_nested(config, "train.lr"),
         "weight": get_nested(config, "method_kwargs.weight"),
         "dt": get_nested(config, "method_kwargs.dt"),
+        "epsilon": get_nested(config, "method_kwargs.epsilon"),
+        "alpha": get_nested(config, "method_kwargs.alpha"),
+        "directional_dt": get_nested(config, "method_kwargs.directional_dt"),
+        "directional_epsilon": get_nested(config, "method_kwargs.directional_epsilon"),
+        "residual_loss": get_nested(config, "method_kwargs.residual_loss"),
+        "directional_approx": get_nested(config, "method_kwargs.directional_approx"),
         "git_commit": env.get("git_commit"),
         "python": env.get("python"),
         "torch": env.get("torch"),
@@ -92,6 +98,12 @@ def columns_for(rows):
         "lr",
         "weight",
         "dt",
+        "epsilon",
+        "alpha",
+        "directional_dt",
+        "directional_epsilon",
+        "residual_loss",
+        "directional_approx",
     ]
     metric_cols = sorted(
         key
