@@ -24,6 +24,7 @@ def material_derivative_jvp(model, x, t, velocity=None):
     return material
 
 
+
 class Method:
     min_t = 0.0
 
@@ -102,6 +103,61 @@ class LagrangianConsistencyJVP(Method):
 
         material = material_derivative_jvp(model, xt, t, vt)
         return {"cfm": cfm, "lc_jvp": self.weight * torch.mean(material.pow(2))}
+
+
+@register(METHODS, "weighted_material_residual")
+class WeightedMaterialResidual(Method):
+    """Material-derivative residual penalty with time-only gate.
+
+    weighting options
+    -----------------
+    "uniform"    λ ‖R‖²          (ablation: no gating)
+    "time_gate"  λ t^β ‖R‖²     (suppress penalty at early t where ambiguity is high)
+    """
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.weight = config.get("weight", 1.0)
+        self.weighting = config.get("weighting", "time_gate")
+        self.beta = config.get("beta", 1.0)
+        self.k_neighbours = config.get("k_neighbours", 8)
+        self.kappa = config.get("kappa", 1.0)
+
+    def loss(self, model, x0, x1):
+        t = self.sample_t(x0.shape[0], x0.device)
+        xt = ((1 - t) * x0 + t * x1).detach().requires_grad_(True)
+        t_g = t.detach().requires_grad_(True)
+        target = x1 - x0
+        vt = model(xt, t_g)
+        cfm = F.mse_loss(vt, target)
+
+        material = material_derivative_jvp(model, xt, t_g, vt)
+        residual_sq = material.pow(2).sum(dim=1, keepdim=True)
+
+        if self.weighting == "uniform":
+            w = torch.ones(t.shape[0], 1, device=t.device)
+        elif self.weighting == "time_gate":
+            w = t.pow(self.beta)
+        elif self.weighting == "variance_gate":
+            w = self._variance_gate(xt.detach(), x1 - x0)
+        else:
+            raise ValueError(f"Unknown weighting: {self.weighting!r}")
+
+        reg = torch.mean(w * residual_sq)
+        return {"cfm": cfm, "wmr": self.weight * reg}
+
+    def _variance_gate(self, xt, u):
+        """g(x_t) = 1 / (1 + kappa * Var[u | x_t]) estimated via k-NN in minibatch."""
+        # pairwise squared distances in x_t space
+        diff = xt.unsqueeze(1) - xt.unsqueeze(0)          # (B, B, D)
+        dist2 = diff.pow(2).sum(dim=2)                     # (B, B)
+        # exclude self by setting diagonal to large value
+        dist2 = dist2 + torch.eye(xt.shape[0], device=xt.device) * 1e9
+        # k nearest neighbours
+        _, idx = dist2.topk(self.k_neighbours, dim=1, largest=False)  # (B, k)
+        u_nn = u[idx]                                      # (B, k, D)
+        var = u_nn.var(dim=1).mean(dim=1, keepdim=True)   # (B, 1)
+        return (1.0 / (1.0 + self.kappa * var.detach()))
 
 
 def build_method(name, config):

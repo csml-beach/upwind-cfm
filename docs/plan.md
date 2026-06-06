@@ -450,3 +450,24 @@ This direction is worth developing only if it can show at least one of the follo
 - improved stability on autoregressive or PDE-like tasks,
 - a clear solver-aware explanation that predicts when the regularizer should help,
 - a meaningful ablation showing that solver weighting and uncertainty gating contribute differently.
+
+## Paper Figure: Regularization Components on Five-Mode Benchmark
+
+A planned figure for the paper showing the effect of each regularization component as a side-by-side scatter plot grid. The goal is to isolate what each piece contributes.
+
+### Proposed panels
+
+**Panel 1 — Standard CFM (no regularization):** baseline, shows mode coverage but high trajectory acceleration and coarse-step error.
+
+**Panel 2 — Uniform material residual (λ‖R‖²):** shows that naive uniform suppression over-straightens trajectories and damages hit rate at the same λ. The over-regularized anchor (λ=10, 0/5 coverage, accel≈0) is already in hand.
+
+**Panel 3 — Variance-gate (λ · g_unc · ‖R‖²):** shows that spatial uncertainty gating recovers mode coverage while still reducing acceleration.
+
+
+### Design notes
+
+- All panels use the same axis limits, color scheme, and metric overlay (W | hit% | acc, coverage N/5).
+- Panels should be small (~3×3 inches) to fit as a grid in a paper column.
+- Fixed eval seed across all panels for directly comparable sample clouds.
+- The λ=10 uniform run can serve as the "over-regularized" anchor.
+
