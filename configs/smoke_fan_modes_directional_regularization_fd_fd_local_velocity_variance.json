@@ -1,0 +1,48 @@
+{
+  "dataset": "fan_modes",
+  "dataset_kwargs": {
+    "n_train": 512,
+    "n_test": 256,
+    "source_mean": [-8.0, 0.0],
+    "source_std": 1.0,
+    "target_centers": [[4.0, -4.0], [5.0, -2.0], [5.5, 0.0], [5.0, 2.0], [4.0, 4.0]],
+    "sigma_mode": 0.2
+  },
+  "method": "directional_regularization_cfm",
+  "method_kwargs": {
+    "weight": 100.0,
+    "weighting": "directional",
+    "residual_loss": "fd_iso",
+    "directional_approx": "fd",
+    "epsilon": 0.05,
+    "alpha": 2.0,
+    "directional_dt": 0.3333333333333333,
+    "directional_epsilon": 0.05,
+    "zeta": 0.001,
+    "uncertainty_gate": "local_velocity_variance",
+    "uncertainty_beta": 1.0,
+    "uncertainty_bandwidth": null,
+    "uncertainty_min_gate": 0.2
+  },
+  "model": "mlp",
+  "seed": 42,
+  "solver": "euler",
+  "solver_kwargs": {
+    "steps": 5,
+    "noise": 0.0
+  },
+  "train": {
+    "batch_size": 64,
+    "epochs": 20,
+    "log_every": 10,
+    "lr": 0.001
+  },
+  "eval": {
+    "n_eval": 128,
+    "mode_p_min": 0.05,
+    "hit_radius": 0.6,
+    "plot_seed": 1234
+  },
+  "out_dir": "/tmp/upwind-cfm-smoke-lvv",
+  "run_name": "smoke_fan_modes_directional_regularization_fd_fd_lvv"
+}

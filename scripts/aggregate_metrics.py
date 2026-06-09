@@ -62,6 +62,10 @@ def row_from_run(root, metrics_path):
         "directional_epsilon": get_nested(config, "method_kwargs.directional_epsilon"),
         "residual_loss": get_nested(config, "method_kwargs.residual_loss"),
         "directional_approx": get_nested(config, "method_kwargs.directional_approx"),
+        "uncertainty_gate": get_nested(config, "method_kwargs.uncertainty_gate"),
+        "uncertainty_beta": get_nested(config, "method_kwargs.uncertainty_beta"),
+        "uncertainty_bandwidth": get_nested(config, "method_kwargs.uncertainty_bandwidth"),
+        "uncertainty_min_gate": get_nested(config, "method_kwargs.uncertainty_min_gate"),
         "git_commit": env.get("git_commit"),
         "python": env.get("python"),
         "torch": env.get("torch"),
@@ -104,6 +108,10 @@ def columns_for(rows):
         "directional_epsilon",
         "residual_loss",
         "directional_approx",
+        "uncertainty_gate",
+        "uncertainty_beta",
+        "uncertainty_bandwidth",
+        "uncertainty_min_gate",
     ]
     metric_cols = sorted(
         key

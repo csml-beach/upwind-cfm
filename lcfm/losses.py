@@ -99,6 +99,11 @@ class DirectionalRegularizationCFM(Method):
         self.residual_loss = config.get("residual_loss", "fd_iso")
         self.directional_approx = config.get("directional_approx", "fd")
         self.weighting = config.get("weighting", "directional")
+        self.uncertainty_gate = config.get("uncertainty_gate", "none")
+        self.uncertainty_beta = config.get("uncertainty_beta", 1.0)
+        self.uncertainty_bandwidth = config.get("uncertainty_bandwidth")
+        self.uncertainty_min_gate = config.get("uncertainty_min_gate", 0.0)
+        self.uncertainty_eps = config.get("uncertainty_eps", 1e-6)
         self.max_t = 1.0 - self.epsilon
         if self.epsilon <= 0.0 or self.epsilon >= 1.0:
             raise ValueError("epsilon must be in (0, 1).")
@@ -112,6 +117,14 @@ class DirectionalRegularizationCFM(Method):
             raise ValueError("directional_regularization_cfm currently supports directional_approx='fd' only.")
         if self.weighting != "directional":
             raise ValueError("directional_regularization_cfm currently supports weighting='directional' only.")
+        if self.uncertainty_gate not in {"none", "local_velocity_variance"}:
+            raise ValueError("uncertainty_gate must be 'none' or 'local_velocity_variance'.")
+        if self.uncertainty_beta < 0.0:
+            raise ValueError("uncertainty_beta must be non-negative.")
+        if self.uncertainty_bandwidth is not None and self.uncertainty_bandwidth <= 0.0:
+            raise ValueError("uncertainty_bandwidth must be positive when set.")
+        if not 0.0 <= self.uncertainty_min_gate <= 1.0:
+            raise ValueError("uncertainty_min_gate must be in [0, 1].")
 
     def sample_t(self, batch_size, device):
         return torch.rand(batch_size, 1, device=device) * self.max_t
@@ -126,6 +139,43 @@ class DirectionalRegularizationCFM(Method):
         c_dir = self.directional_dt * l_dir
         return (self.directional_dt**2) * c_dir.pow(2) / (1.0 + c_dir.pow(2))
 
+    def local_velocity_variance_gate(self, x, target):
+        with torch.no_grad():
+            if self.uncertainty_gate == "none" or self.uncertainty_beta == 0.0:
+                return torch.ones(x.shape[0], 1, device=x.device, dtype=x.dtype)
+
+            x_detached = x.detach()
+            target_detached = target.detach()
+            distance_sq = torch.cdist(x_detached, x_detached).pow(2)
+            if self.uncertainty_bandwidth is None:
+                nonzero_distance_sq = distance_sq[distance_sq > 0.0]
+                if nonzero_distance_sq.numel() == 0:
+                    bandwidth_sq = torch.ones((), device=x.device, dtype=x.dtype)
+                else:
+                    bandwidth_sq = torch.median(nonzero_distance_sq).clamp_min(self.uncertainty_eps)
+            else:
+                bandwidth_sq = torch.as_tensor(
+                    self.uncertainty_bandwidth**2,
+                    device=x.device,
+                    dtype=x.dtype,
+                )
+
+            kernel = torch.exp(-0.5 * distance_sq / bandwidth_sq)
+            if kernel.shape[0] > 1:
+                kernel.fill_diagonal_(0.0)
+            normalizer = kernel.sum(dim=1, keepdim=True).clamp_min(self.uncertainty_eps)
+            local_mean = (kernel @ target_detached) / normalizer
+            local_deviation_sq = torch.sum(
+                (target_detached.unsqueeze(0) - local_mean.unsqueeze(1)).pow(2),
+                dim=2,
+            )
+            local_variance = (kernel * local_deviation_sq).sum(dim=1, keepdim=True) / normalizer
+            variance_scale = torch.median(local_variance).clamp_min(self.uncertainty_eps)
+            normalized_variance = local_variance / variance_scale
+            gate = 1.0 / (1.0 + self.uncertainty_beta * normalized_variance)
+            gate = self.uncertainty_min_gate + (1.0 - self.uncertainty_min_gate) * gate
+            return gate.detach()
+
     def loss(self, model, x0, x1):
         t = self.sample_t(x0.shape[0], x0.device)
         xt, target, vt = cfm_batch(model, x0, x1, t)
@@ -139,7 +189,8 @@ class DirectionalRegularizationCFM(Method):
         temporal_weight = (1.0 - t).pow(self.alpha) / self.epsilon
         residual = torch.sum(torch.abs((vt - vt_next) / speed), dim=1, keepdim=True)
         solver_weight = self.directional_weight_fd(model, xt, t, vt)
-        directional_reg = torch.mean(temporal_weight * solver_weight * residual)
+        uncertainty_gate = self.local_velocity_variance_gate(xt, target)
+        directional_reg = torch.mean(temporal_weight * solver_weight * uncertainty_gate * residual)
         return {"cfm": cfm, "directional_reg": self.weight * directional_reg}
 
 

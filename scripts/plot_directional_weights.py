@@ -40,15 +40,18 @@ def mode_problem_bounds(points_by_panel, centers, sigma_mode):
 
 def compute_weights(method, model, x0, x1, t_value, include_temporal=True, include_global=True):
     t = torch.full((x0.shape[0], 1), t_value, device=x0.device)
-    xt, _, vt = cfm_batch(model, x0, x1, t)
+    xt, target, vt = cfm_batch(model, x0, x1, t)
     solver_weight = method.directional_weight_fd(model, xt, t, vt).detach().flatten()
+    uncertainty_gate = method.local_velocity_variance_gate(xt, target).detach().flatten()
     temporal_weight = ((1.0 - t).pow(method.alpha) / method.epsilon).detach().flatten()
     weight = solver_weight
+    if getattr(method, "uncertainty_gate", "none") != "none":
+        weight = weight * uncertainty_gate
     if include_temporal:
         weight = weight * temporal_weight
     if include_global:
         weight = weight * method.weight
-    return xt.detach(), weight.detach(), solver_weight.detach(), temporal_weight.detach()
+    return xt.detach(), weight.detach(), solver_weight.detach(), temporal_weight.detach(), uncertainty_gate.detach()
 
 
 def draw_centers(ax, centers, sigma_mode):
@@ -117,7 +120,7 @@ def plot_directional_weights(
         squeeze=False,
         constrained_layout=True,
     )
-    for col, (t_value, (xt, weight, solver_weight, temporal_weight)) in enumerate(zip(t_values, panels)):
+    for col, (t_value, (xt, weight, solver_weight, temporal_weight, uncertainty_gate)) in enumerate(zip(t_values, panels)):
         ax = axes[0, col]
         ax.set_facecolor("#fbfbfa")
         draw_centers(ax, centers, problem.sigma_mode)
@@ -154,7 +157,8 @@ def plot_directional_weights(
             0.98,
             0.95,
             f"raw mean={solver_weight.mean().item():.3g}\n"
-            f"time mean={temporal_weight.mean().item():.3g}",
+            f"time mean={temporal_weight.mean().item():.3g}\n"
+            f"gate mean={uncertainty_gate.mean().item():.3g}",
             transform=hist_ax.transAxes,
             ha="right",
             va="top",

@@ -49,6 +49,8 @@ class FiveModesProblem:
         self.n_test = config.get("n_test", 2000)
         self.radius = config.get("radius", 4.0)
         self.sigma_mode = config.get("sigma_mode", 0.20)
+        self.source_mean = torch.tensor(config.get("source_mean", [0.0, 0.0]), dtype=torch.float32)
+        self.source_std = config.get("source_std", 1.0)
         self.n_modes = 5
         self.mode_centers = self._make_centers()
         self.train = self._sample_modes(self.n_train)
@@ -63,14 +65,26 @@ class FiveModesProblem:
         centers = self.mode_centers[mode_idx]
         return centers + self.sigma_mode * torch.randn(n_samples, self.dim)
 
+    def _source_std_tensor(self, device):
+        return torch.as_tensor(self.source_std, dtype=torch.float32, device=device).reshape(-1)
+
+    def _sample_source(self, n_samples, device):
+        mean = self.source_mean.to(device)
+        std = self._source_std_tensor(device)
+        if std.numel() == 1:
+            return mean + std.item() * torch.randn(n_samples, self.dim, device=device)
+        if std.numel() != self.dim:
+            raise ValueError("source_std must be a scalar or length-2 sequence.")
+        return mean + torch.randn(n_samples, self.dim, device=device) * std
+
     def sample_train_batch(self, batch_size, device):
         idx = torch.randint(self.train.shape[0], (batch_size,))
         x1 = self.train[idx].to(device)
-        x0 = torch.randn_like(x1)
+        x0 = self._sample_source(batch_size, device)
         return x0, x1
 
     def eval_initial(self, n_eval, device):
-        return torch.randn(n_eval, self.dim, device=device)
+        return self._sample_source(n_eval, device)
 
     def target_eval(self, n_eval, device):
         if n_eval <= self.test.shape[0]:

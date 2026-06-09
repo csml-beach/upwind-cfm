@@ -3,14 +3,19 @@
   "dataset_kwargs": {
     "n_train": 5000,
     "n_test": 2000,
-    "radius": 6.0,
+    "radius": 4.0,
     "sigma_mode": 0.2
   },
-  "method": "iso_fm_finite_difference",
+  "method": "directional_regularization_cfm",
   "method_kwargs": {
-    "weight": 0.5,
+    "weight": 2.0,
+    "weighting": "directional",
+    "residual_loss": "fd_iso",
+    "directional_approx": "fd",
     "epsilon": 0.05,
     "alpha": 2.0,
+    "directional_dt": 0.3333333333333333,
+    "directional_epsilon": 0.05,
     "zeta": 0.001
   },
   "model": "mlp",
@@ -21,17 +26,16 @@
     "noise": 0.0
   },
   "train": {
-    "batch_size": 128,
-    "epochs": 1500,
-    "log_every": 50,
+    "batch_size": 256,
+    "epochs": 2000,
+    "log_every": 200,
     "lr": 0.001
   },
   "eval": {
     "n_eval": 1000,
     "mode_p_min": 0.05,
     "hit_radius": 0.6,
-    "eval_seed": 1234,
     "plot_seed": 1234
   },
-  "run_name": "five_modes_iso_fd_w05_r6"
+  "run_name": "five_modes_directional_regularization_fd_fd_w2_dt0333"
 }
