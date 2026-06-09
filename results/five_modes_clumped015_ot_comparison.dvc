@@ -1,0 +1,6 @@
+outs:
+- md5: c14c32fe6d3f69fda21e896653825e8a.dir
+  size: 5385251
+  nfiles: 153
+  hash: md5
+  path: five_modes_clumped015_ot_comparison

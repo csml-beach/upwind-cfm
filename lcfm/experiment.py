@@ -19,6 +19,7 @@ from .metrics import (
     wasserstein_match,
 )
 from .models import build_model
+from .pairing import apply_pairing
 from .registry import DATASETS, get
 from .solvers import solve
 from .utils import device_from_config, environment_info, repo_root, set_seed, write_json
@@ -37,6 +38,7 @@ def train_model(problem, config, device):
     model.train()
     for epoch in range(epochs):
         x0, x1 = problem.sample_train_batch(batch_size, device)
+        x0, x1 = apply_pairing(x0, x1, config)
         terms = method.loss(model, x0, x1)
         loss = sum(terms.values())
         optimizer.zero_grad()

@@ -1,0 +1,6 @@
+outs:
+- md5: bf5245bed7d72c1993e0a2c7eabf690e.dir
+  size: 8134775
+  nfiles: 107
+  hash: md5
+  path: five_modes_ring_w2_multiseed
