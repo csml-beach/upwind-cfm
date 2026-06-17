@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import torch
 from scipy.integrate import odeint
@@ -299,6 +301,68 @@ class GaussianMixtureNDProblem:
         return self.mode_centers.to(device)
 
 
+class CIFAR10Problem:
+    name = "cifar10"
+    image_shape = (3, 32, 32)
+    dim = 3 * 32 * 32
+
+    def __init__(self, config):
+        self.data_root = Path(config.get("data_root", "data"))
+        self.download = config.get("download", True)
+        self.fake_data = config.get("fake_data", False)
+        self.n_train = config.get("n_train")
+        self.n_test = config.get("n_test")
+        self.data_seed = config.get("data_seed", 0)
+        self.train = self._load_split(train=True)
+        self.test = self._load_split(train=False)
+        self.n_train = self.train.shape[0]
+        self.n_test = self.test.shape[0]
+
+    def _fake_split(self, n_samples, seed_offset):
+        generator = torch.Generator().manual_seed(self.data_seed + seed_offset)
+        images = 2.0 * torch.rand(n_samples, *self.image_shape, generator=generator) - 1.0
+        return images.reshape(n_samples, self.dim).contiguous()
+
+    def _load_split(self, train):
+        max_samples = self.n_train if train else self.n_test
+        if self.fake_data:
+            default_n = 512 if train else 128
+            return self._fake_split(max_samples or default_n, 0 if train else 10_000)
+
+        try:
+            from torchvision.datasets import CIFAR10
+        except ImportError as exc:
+            raise ImportError("CIFAR-10 runs require torchvision. Install requirements.txt first.") from exc
+
+        dataset = CIFAR10(root=str(self.data_root), train=train, download=self.download)
+        data = torch.from_numpy(dataset.data).permute(0, 3, 1, 2).float()
+        data = data / 127.5 - 1.0
+        if max_samples is not None:
+            data = data[:max_samples]
+        return data.reshape(data.shape[0], self.dim).contiguous()
+
+    def sample_train_batch(self, batch_size, device):
+        idx = torch.randint(self.train.shape[0], (batch_size,))
+        x1 = self.train[idx].to(device)
+        x0 = torch.randn(batch_size, self.dim, device=device)
+        return x0, x1
+
+    def eval_initial(self, n_eval, device):
+        return torch.randn(n_eval, self.dim, device=device)
+
+    def target_eval(self, n_eval, device):
+        if n_eval <= self.test.shape[0]:
+            return self.test[:n_eval].to(device)
+        idx = torch.randint(self.test.shape[0], (n_eval,))
+        return self.test[idx].to(device)
+
+    def metric_reference(self, n_eval, device):
+        if n_eval <= self.train.shape[0]:
+            return self.train[:n_eval].to(device)
+        idx = torch.randint(self.train.shape[0], (n_eval,))
+        return self.train[idx].to(device)
+
+
 def burgers_rhs(u, t, dx, nu):
     u_x = (np.roll(u, -1) - np.roll(u, 1)) / (2 * dx)
     u_xx = (np.roll(u, -1) - 2 * u + np.roll(u, 1)) / (dx**2)
@@ -352,4 +416,5 @@ register(DATASETS, "five_modes")(FiveModesProblem)
 register(DATASETS, "fan_modes")(FanModesProblem)
 register(DATASETS, "staged_modes")(StagedModesProblem)
 register(DATASETS, "gaussian_mixture_nd")(GaussianMixtureNDProblem)
+register(DATASETS, "cifar10")(CIFAR10Problem)
 register(DATASETS, "burgers_autoregressive")(BurgersAutoregressiveProblem)

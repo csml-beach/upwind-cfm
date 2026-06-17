@@ -1,4 +1,9 @@
 torch
+torchvision
+torchmetrics
+torch-fidelity
 numpy
 scipy
 matplotlib
+tqdm
+pandas

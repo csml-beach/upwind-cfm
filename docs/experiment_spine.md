@@ -36,6 +36,7 @@ configs/
   clumped source, intended to create staged commitment times.
 - `gaussian_mixture_nd`: oracle-compatible high-dimensional Gaussian mixture benchmark; the
   default config uses eight simplex-like modes in 16 dimensions.
+- `cifar10`: flattened 32x32 RGB image benchmark with optional fake-data smoke mode.
 - `burgers_autoregressive`: learns frame-to-next-frame flow and rolls out autoregressively.
 
 The older flattened Burgers surface-generation task should not be used for new comparisons.
@@ -63,6 +64,11 @@ Pairing is a training-time batch transform. Methods still receive only `(x0, x1)
 - `euler`: standard explicit Euler.
 - `velocity_smoothed_euler`: the previous projection-based velocity smoothing solver, renamed to avoid calling it upwind.
 - `heun`: second-order predictor-corrector baseline.
+
+## Image Benchmark
+
+The CIFAR-10 low-NFE benchmark uses `unet2d`, image sample grids, optional FID/KID, step-based
+training, checkpoints, resume, and fixed-seed NFE comparisons. See `docs/cifar10_benchmark.md`.
 
 ## Run Artifacts
 

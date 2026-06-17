@@ -2,6 +2,7 @@ import math
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from .registry import MODELS, register
 
@@ -85,6 +86,143 @@ class UNet1D(nn.Module):
         u2 = self.up2(u1)
         u2 = self.block_up2(torch.cat([u2, x1], dim=1), t_emb)
         return self.out(u2).squeeze(1)
+
+
+def _group_count(channels, requested):
+    groups = min(requested, channels)
+    while channels % groups != 0:
+        groups -= 1
+    return groups
+
+
+class ResBlock2D(nn.Module):
+    def __init__(self, in_ch, out_ch, time_emb_dim, groups=8):
+        super().__init__()
+        self.norm1 = nn.GroupNorm(_group_count(in_ch, groups), in_ch)
+        self.conv1 = nn.Conv2d(in_ch, out_ch, 3, padding=1)
+        self.time_mlp = nn.Sequential(nn.SiLU(), nn.Linear(time_emb_dim, out_ch))
+        self.norm2 = nn.GroupNorm(_group_count(out_ch, groups), out_ch)
+        self.conv2 = nn.Conv2d(out_ch, out_ch, 3, padding=1)
+        self.skip = nn.Identity() if in_ch == out_ch else nn.Conv2d(in_ch, out_ch, 1)
+
+    def forward(self, x, t_emb):
+        h = self.conv1(F.silu(self.norm1(x)))
+        h = h + self.time_mlp(t_emb)[:, :, None, None]
+        h = self.conv2(F.silu(self.norm2(h)))
+        return h + self.skip(x)
+
+
+class Attention2D(nn.Module):
+    def __init__(self, channels, groups=8):
+        super().__init__()
+        self.norm = nn.GroupNorm(_group_count(channels, groups), channels)
+        self.qkv = nn.Conv2d(channels, channels * 3, 1)
+        self.proj = nn.Conv2d(channels, channels, 1)
+        self.scale = channels**-0.5
+
+    def forward(self, x):
+        b, c, h, w = x.shape
+        q, k, v = self.qkv(self.norm(x)).reshape(b, 3, c, h * w).unbind(dim=1)
+        attn = torch.softmax(torch.bmm(q.transpose(1, 2), k) * self.scale, dim=-1)
+        out = torch.bmm(v, attn.transpose(1, 2)).reshape(b, c, h, w)
+        return x + self.proj(out)
+
+
+@register(MODELS, "unet2d")
+class UNet2D(nn.Module):
+    def __init__(
+        self,
+        dim,
+        image_shape=(3, 32, 32),
+        base_channels=128,
+        channel_mults=(1, 2, 2, 4),
+        num_res_blocks=2,
+        time_dim=256,
+        attention_resolutions=(16,),
+        groups=8,
+    ):
+        super().__init__()
+        self.image_shape = tuple(image_shape)
+        channels, height, width = self.image_shape
+        if dim != channels * height * width:
+            raise ValueError("UNet2D dim must equal product(image_shape).")
+        self.dim = dim
+        self.channels = channels
+        self.time_mlp = nn.Sequential(
+            SinusoidalPosEmb(time_dim),
+            nn.Linear(time_dim, time_dim * 4),
+            nn.SiLU(),
+            nn.Linear(time_dim * 4, time_dim),
+        )
+
+        self.init_conv = nn.Conv2d(channels, base_channels, 3, padding=1)
+        self.down_blocks = nn.ModuleList()
+        self.downsamples = nn.ModuleList()
+        self.up_blocks = nn.ModuleList()
+        self.attention_resolutions = set(attention_resolutions or [])
+
+        in_ch = base_channels
+        resolution = height
+        skip_channels = []
+        level_channels = [base_channels * int(mult) for mult in channel_mults]
+        for level, out_ch in enumerate(level_channels):
+            blocks = nn.ModuleList()
+            for _ in range(num_res_blocks):
+                blocks.append(ResBlock2D(in_ch, out_ch, time_dim, groups))
+                in_ch = out_ch
+            attn = Attention2D(in_ch, groups) if resolution in self.attention_resolutions else nn.Identity()
+            self.down_blocks.append(nn.ModuleDict({"blocks": blocks, "attention": attn}))
+            skip_channels.append(in_ch)
+            if level != len(level_channels) - 1:
+                self.downsamples.append(nn.Conv2d(in_ch, in_ch, 4, stride=2, padding=1))
+                resolution //= 2
+            else:
+                self.downsamples.append(nn.Identity())
+
+        self.mid1 = ResBlock2D(in_ch, in_ch, time_dim, groups)
+        self.mid_attn = Attention2D(in_ch, groups)
+        self.mid2 = ResBlock2D(in_ch, in_ch, time_dim, groups)
+
+        for out_ch, skip_ch in zip(reversed(level_channels), reversed(skip_channels)):
+            blocks = nn.ModuleList([ResBlock2D(in_ch + skip_ch, out_ch, time_dim, groups)])
+            for _ in range(max(0, num_res_blocks - 1)):
+                blocks.append(ResBlock2D(out_ch, out_ch, time_dim, groups))
+            attn = Attention2D(out_ch, groups) if resolution in self.attention_resolutions else nn.Identity()
+            self.up_blocks.append(nn.ModuleDict({"blocks": blocks, "attention": attn}))
+            in_ch = out_ch
+            resolution *= 2
+
+        self.final_norm = nn.GroupNorm(_group_count(in_ch, groups), in_ch)
+        self.final_conv = nn.Conv2d(in_ch, channels, 3, padding=1)
+
+    def forward(self, x, t):
+        b = x.shape[0]
+        h = x.reshape(b, *self.image_shape)
+        t_emb = self.time_mlp(t.expand(b, 1))
+        h = self.init_conv(h)
+        skips = []
+        for block_group, downsample in zip(self.down_blocks, self.downsamples):
+            for block in block_group["blocks"]:
+                h = block(h, t_emb)
+            h = block_group["attention"](h)
+            skips.append(h)
+            h = downsample(h)
+
+        h = self.mid1(h, t_emb)
+        h = self.mid_attn(h)
+        h = self.mid2(h, t_emb)
+
+        for block_group in self.up_blocks:
+            skip = skips.pop()
+            if h.shape[-2:] != skip.shape[-2:]:
+                h = F.interpolate(h, size=skip.shape[-2:], mode="nearest")
+            h = torch.cat([h, skip], dim=1)
+            for block in block_group["blocks"]:
+                h = block(h, t_emb)
+            h = block_group["attention"](h)
+
+        h = self.final_conv(F.silu(self.final_norm(h)))
+        return h.reshape(b, self.dim)
 
 
 def build_model(name, dim, config):

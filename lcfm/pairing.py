@@ -1,9 +1,28 @@
 import torch
+import torch.nn.functional as F
 from scipy.optimize import linear_sum_assignment
 
 
-def minibatch_ot_pair(x0, x1):
-    cost = torch.cdist(x0.detach(), x1.detach()).pow(2).cpu().numpy()
+def pairing_features(x, config):
+    kwargs = config.get("pairing_kwargs", {}) if config else {}
+    feature = kwargs.get("cost_feature", "raw")
+    if feature == "raw":
+        return x
+    if feature == "downsampled_pixels":
+        image_shape = tuple(kwargs.get("image_shape", (3, 32, 32)))
+        downsample_size = int(kwargs.get("downsample_size", 8))
+        if x.shape[1] != image_shape[0] * image_shape[1] * image_shape[2]:
+            raise ValueError("downsampled_pixels pairing requires flat vectors matching image_shape.")
+        images = x.reshape(x.shape[0], *image_shape)
+        pooled = F.adaptive_avg_pool2d(images, (downsample_size, downsample_size))
+        return pooled.flatten(1)
+    raise ValueError(f"Unknown pairing cost_feature: {feature}")
+
+
+def minibatch_ot_pair(x0, x1, config=None):
+    x0_feat = pairing_features(x0.detach(), config)
+    x1_feat = pairing_features(x1.detach(), config)
+    cost = torch.cdist(x0_feat, x1_feat).pow(2).cpu().numpy()
     _, col = linear_sum_assignment(cost)
     order = torch.as_tensor(col, device=x1.device)
     return x0, x1[order]
@@ -16,12 +35,13 @@ def _positive_median(values, eps):
     return torch.median(positive).clamp_min(eps)
 
 
-def _pressure_reference_pairs(x0, x1, reference_pairing):
+def _pressure_reference_order(x0_feat, x1_feat, reference_pairing):
     if reference_pairing == "independent":
-        return x1
+        return torch.arange(x1_feat.shape[0], device=x1_feat.device)
     if reference_pairing == "minibatch_ot":
-        _, x1_ref = minibatch_ot_pair(x0, x1)
-        return x1_ref
+        cost = torch.cdist(x0_feat, x1_feat).pow(2).cpu().numpy()
+        _, col = linear_sum_assignment(cost)
+        return torch.as_tensor(col, device=x1_feat.device)
     raise ValueError("reference_pairing must be 'independent' or 'minibatch_ot'.")
 
 
@@ -52,16 +72,19 @@ def pressure_aware_minibatch_ot_pair(x0, x1, config):
     if beta < 0.0:
         raise ValueError("pressure_beta must be non-negative.")
     if beta == 0.0:
-        return minibatch_ot_pair(x0, x1)
+        return minibatch_ot_pair(x0, x1, config)
 
     x0_detached = x0.detach()
     x1_detached = x1.detach()
-    base_cost = torch.cdist(x0_detached, x1_detached).pow(2)
+    x0_feat = pairing_features(x0_detached, config)
+    x1_feat = pairing_features(x1_detached, config)
+    base_cost = torch.cdist(x0_feat, x1_feat).pow(2)
     base_scale = _positive_median(base_cost, eps)
 
-    x1_ref = _pressure_reference_pairs(x0_detached, x1_detached, reference_pairing)
-    ref_xt = (1.0 - t_value) * x0_detached + t_value * x1_ref
-    ref_u = x1_ref - x0_detached
+    ref_order = _pressure_reference_order(x0_feat, x1_feat, reference_pairing)
+    x1_ref_feat = x1_feat[ref_order]
+    ref_xt = (1.0 - t_value) * x0_feat + t_value * x1_ref_feat
+    ref_u = x1_ref_feat - x0_feat
 
     ref_dist_sq = torch.cdist(ref_xt, ref_xt).pow(2)
     if bandwidth is None:
@@ -69,8 +92,8 @@ def pressure_aware_minibatch_ot_pair(x0, x1, config):
     else:
         bandwidth_sq = torch.as_tensor(float(bandwidth) ** 2, device=x0.device, dtype=x0.dtype).clamp_min(eps)
 
-    candidate_xt = (1.0 - t_value) * x0_detached[:, None, :] + t_value * x1_detached[None, :, :]
-    flat_xt = candidate_xt.reshape(-1, x0.shape[1])
+    candidate_xt = (1.0 - t_value) * x0_feat[:, None, :] + t_value * x1_feat[None, :, :]
+    flat_xt = candidate_xt.reshape(-1, x0_feat.shape[1])
     dist_sq = torch.cdist(flat_xt, ref_xt).pow(2)
     kernel = torch.exp(-0.5 * dist_sq / bandwidth_sq)
     normalizer = kernel.sum(dim=1, keepdim=True).clamp_min(eps)
@@ -92,7 +115,7 @@ def apply_pairing(x0, x1, config):
     if pairing == "independent":
         return x0, x1
     if pairing == "minibatch_ot":
-        return minibatch_ot_pair(x0, x1)
+        return minibatch_ot_pair(x0, x1, config)
     if pairing == "pressure_aware_minibatch_ot":
         return pressure_aware_minibatch_ot_pair(x0, x1, config)
     raise ValueError(f"Unknown pairing: {pairing}")

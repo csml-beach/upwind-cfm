@@ -40,11 +40,15 @@ def git_commit():
 
 
 def environment_info():
+    cuda_device = None
+    if torch.cuda.is_available():
+        cuda_device = torch.cuda.get_device_name(0)
     return {
         "python": platform.python_version(),
         "platform": platform.platform(),
         "torch": torch.__version__,
         "cuda_available": torch.cuda.is_available(),
+        "cuda_device": cuda_device,
         "git_commit": git_commit(),
     }
 
