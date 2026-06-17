@@ -4,12 +4,33 @@ from scipy.optimize import linear_sum_assignment
 from scipy.spatial.distance import cdist
 
 
-def wasserstein_match(x, y):
-    x_np = x.detach().cpu().numpy()
-    y_np = y.detach().cpu().numpy()
+def wasserstein_match(x, y, p=1):
+    """Exact empirical Wasserstein distance by optimal bipartite matching.
+
+    The samples are treated as equally weighted empirical measures. For p=1 this
+    returns the mean matched Euclidean distance. For p=2 this minimizes squared
+    Euclidean cost and returns sqrt(mean squared matched distance). This is exact
+    for the finite sample sets; remaining uncertainty is statistical sample noise,
+    not assignment approximation.
+    """
+    if p < 1:
+        raise ValueError("p must be >= 1.")
+    if x.shape[0] == 0 or y.shape[0] == 0:
+        raise ValueError("wasserstein_match requires non-empty sample sets.")
+    if x.ndim != 2 or y.ndim != 2 or x.shape[1] != y.shape[1]:
+        raise ValueError("wasserstein_match expects two 2D tensors with the same feature dimension.")
+    if x.shape[0] != y.shape[0]:
+        raise ValueError("Exact equally weighted matching requires the same number of samples.")
+
+    x_np = x.detach().cpu().numpy().astype(np.float64, copy=False)
+    y_np = y.detach().cpu().numpy().astype(np.float64, copy=False)
     d_matrix = cdist(x_np, y_np, metric="euclidean")
-    row_ind, col_ind = linear_sum_assignment(d_matrix)
-    return float(d_matrix[row_ind, col_ind].mean())
+    cost = d_matrix if p == 1 else d_matrix**p
+    row_ind, col_ind = linear_sum_assignment(cost)
+    matched = d_matrix[row_ind, col_ind]
+    if p == 1:
+        return float(matched.mean())
+    return float(np.power(np.mean(matched**p), 1.0 / p))
 
 
 def path_length_ratio(traj):

@@ -63,6 +63,7 @@ def eval_spiral(problem, model, config, device):
     traj = solve(config.get("solver", "euler"), model, x0, config.get("solver_kwargs", {"steps": 15}))
     return {
         "wasserstein": wasserstein_match(traj[-1], target),
+        "wasserstein2": wasserstein_match(traj[-1], target, p=2),
         "mean_path_length": mean_path_length(traj),
         "mean_endpoint_displacement": mean_endpoint_displacement(traj),
         "path_length_ratio": path_length_ratio(traj),
@@ -81,6 +82,7 @@ def eval_five_modes(problem, model, config, device):
     traj = solve(config.get("solver", "euler"), model, x0, config.get("solver_kwargs", {"steps": 5}))
     metrics = {
         "wasserstein": wasserstein_match(traj[-1], target),
+        "wasserstein2": wasserstein_match(traj[-1], target, p=2),
         "mean_path_length": mean_path_length(traj),
         "mean_endpoint_displacement": mean_endpoint_displacement(traj),
         "path_length_ratio": path_length_ratio(traj),

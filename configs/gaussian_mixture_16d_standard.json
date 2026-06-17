@@ -1,0 +1,40 @@
+{
+  "dataset": "gaussian_mixture_nd",
+  "dataset_kwargs": {
+    "dim": 16,
+    "n_modes": 8,
+    "n_train": 5000,
+    "n_test": 2000,
+    "radius": 4.0,
+    "sigma_mode": 0.2,
+    "source_std": 0.15
+  },
+  "method": "standard_cfm",
+  "method_kwargs": {},
+  "pairing": "independent",
+  "model": "mlp",
+  "model_kwargs": {
+    "hidden": 128,
+    "depth": 3
+  },
+  "seed": 0,
+  "solver": "euler",
+  "solver_kwargs": {
+    "steps": 5,
+    "noise": 0.0
+  },
+  "train": {
+    "batch_size": 256,
+    "epochs": 2000,
+    "log_every": 2000,
+    "lr": 0.001
+  },
+  "eval": {
+    "n_eval": 1000,
+    "mode_p_min": 0.05,
+    "hit_radius": 1.6,
+    "eval_seed": 1234,
+    "plot_seed": 1234
+  },
+  "run_name": "gaussian_mixture_16d_standard_seed0"
+}

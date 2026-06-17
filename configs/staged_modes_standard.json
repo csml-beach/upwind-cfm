@@ -1,0 +1,33 @@
+{
+  "dataset": "staged_modes",
+  "dataset_kwargs": {
+    "n_train": 5000,
+    "n_test": 2000,
+    "sigma_mode": 0.2,
+    "source_std": 0.15
+  },
+  "method": "standard_cfm",
+  "method_kwargs": {},
+  "pairing": "independent",
+  "model": "mlp",
+  "seed": 0,
+  "solver": "euler",
+  "solver_kwargs": {
+    "steps": 5,
+    "noise": 0.0
+  },
+  "train": {
+    "batch_size": 256,
+    "epochs": 2000,
+    "log_every": 2000,
+    "lr": 0.001
+  },
+  "eval": {
+    "n_eval": 1000,
+    "mode_p_min": 0.05,
+    "hit_radius": 0.6,
+    "eval_seed": 1234,
+    "plot_seed": 1234
+  },
+  "run_name": "staged_modes_standard_seed0"
+}

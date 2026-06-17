@@ -19,7 +19,7 @@ lcfm/
   losses.py         # standard CFM, LC, Iso-FD, directional regularization
   pairing.py        # optional training-time source-target batch pairing
   solvers.py        # Euler, velocity-smoothed Euler, Heun
-  metrics.py        # W2, path length, acceleration, RMSE, temporal TV
+  metrics.py        # exact empirical W1/W2 matching, path length, acceleration, RMSE, temporal TV
   experiment.py     # shared train/eval loop
 scripts/
   run_experiment.py # config-driven runner
@@ -32,6 +32,10 @@ configs/
 - `spiral`: 2D noise-to-data CFM benchmark.
 - `five_modes`: centered ring of five Gaussian target modes, with configurable source scale.
 - `fan_modes`: asymmetric source-to-multimodal-target benchmark.
+- `staged_modes`: 2D Gaussian mixture with modes at different distances and angles from a
+  clumped source, intended to create staged commitment times.
+- `gaussian_mixture_nd`: oracle-compatible high-dimensional Gaussian mixture benchmark; the
+  default config uses eight simplex-like modes in 16 dimensions.
 - `burgers_autoregressive`: learns frame-to-next-frame flow and rolls out autoregressively.
 
 The older flattened Burgers surface-generation task should not be used for new comparisons.
@@ -48,6 +52,9 @@ The older flattened Burgers surface-generation task should not be used for new c
 
 - `independent`: default independent source-target pairing.
 - `minibatch_ot`: Hungarian assignment on squared Euclidean source-target minibatch costs before applying the method loss.
+- `pressure_aware_minibatch_ot`: Hungarian assignment with an added scalar local
+  conditional-velocity-variance cost. This is a pressure-aware coupling design:
+  it changes the minibatch pairing while leaving the CFM velocity target unchanged.
 
 Pairing is a training-time batch transform. Methods still receive only `(x0, x1)` and do not need method-specific OT logic.
 

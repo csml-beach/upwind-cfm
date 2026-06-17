@@ -161,6 +161,144 @@ class FanModesProblem:
         return self.mode_centers.to(device)
 
 
+class StagedModesProblem:
+    name = "staged_modes"
+    dim = 2
+
+    def __init__(self, config):
+        self.n_train = config.get("n_train", 5000)
+        self.n_test = config.get("n_test", 2000)
+        self.sigma_mode = config.get("sigma_mode", 0.20)
+        self.source_mean = torch.tensor(config.get("source_mean", [0.0, 0.0]), dtype=torch.float32)
+        self.source_std = config.get("source_std", 0.15)
+        self.mode_centers = self._make_centers(config)
+        self.n_modes = self.mode_centers.shape[0]
+        self.train = self._sample_modes(self.n_train)
+        self.test = self._sample_modes(self.n_test)
+
+    def _make_centers(self, config):
+        default_centers = [
+            [2.4, -0.4],
+            [3.4, 2.1],
+            [4.8, -2.8],
+            [6.2, 0.8],
+            [7.4, 3.6],
+        ]
+        centers = torch.tensor(config.get("target_centers", default_centers), dtype=torch.float32)
+        if centers.ndim != 2 or centers.shape[1] != self.dim:
+            raise ValueError("target_centers must have shape [n_modes, 2].")
+        return centers
+
+    def _source_std_tensor(self, device):
+        return torch.as_tensor(self.source_std, dtype=torch.float32, device=device).reshape(-1)
+
+    def _sample_source(self, n_samples, device):
+        mean = self.source_mean.to(device)
+        std = self._source_std_tensor(device)
+        if std.numel() == 1:
+            return mean + std.item() * torch.randn(n_samples, self.dim, device=device)
+        if std.numel() != self.dim:
+            raise ValueError("source_std must be a scalar or length-2 sequence.")
+        return mean + torch.randn(n_samples, self.dim, device=device) * std
+
+    def _sample_modes(self, n_samples):
+        mode_idx = torch.randint(self.n_modes, (n_samples,))
+        centers = self.mode_centers[mode_idx]
+        return centers + self.sigma_mode * torch.randn(n_samples, self.dim)
+
+    def sample_train_batch(self, batch_size, device):
+        idx = torch.randint(self.train.shape[0], (batch_size,))
+        x1 = self.train[idx].to(device)
+        x0 = self._sample_source(batch_size, device)
+        return x0, x1
+
+    def eval_initial(self, n_eval, device):
+        return self._sample_source(n_eval, device)
+
+    def target_eval(self, n_eval, device):
+        if n_eval <= self.test.shape[0]:
+            return self.test[:n_eval].to(device)
+        idx = torch.randint(self.test.shape[0], (n_eval,))
+        return self.test[idx].to(device)
+
+    def centers(self, device):
+        return self.mode_centers.to(device)
+
+
+class GaussianMixtureNDProblem:
+    name = "gaussian_mixture_nd"
+
+    def __init__(self, config):
+        self.dim = config.get("dim", 16)
+        self.n_modes = config.get("n_modes", 8)
+        self.n_train = config.get("n_train", 5000)
+        self.n_test = config.get("n_test", 2000)
+        self.radius = config.get("radius", 4.0)
+        self.sigma_mode = config.get("sigma_mode", 0.20)
+        self.source_mean = torch.tensor(config.get("source_mean", [0.0] * self.dim), dtype=torch.float32)
+        self.source_std = config.get("source_std", 0.15)
+        if self.source_mean.numel() != self.dim:
+            raise ValueError("source_mean must have length dim.")
+        self.mode_centers = self._make_centers(config)
+        self.train = self._sample_modes(self.n_train)
+        self.test = self._sample_modes(self.n_test)
+
+    def _make_centers(self, config):
+        if "target_centers" in config:
+            centers = torch.tensor(config["target_centers"], dtype=torch.float32)
+            if centers.ndim != 2 or centers.shape[1] != self.dim:
+                raise ValueError("target_centers must have shape [n_modes, dim].")
+            self.n_modes = centers.shape[0]
+            return centers
+
+        if config.get("center_type", "simplex") == "simplex" and self.dim >= self.n_modes:
+            centers = torch.eye(self.n_modes, dtype=torch.float32)
+            centers = centers - centers.mean(dim=0, keepdim=True)
+            if self.dim > self.n_modes:
+                padding = torch.zeros(self.n_modes, self.dim - self.n_modes, dtype=torch.float32)
+                centers = torch.cat([centers, padding], dim=1)
+        else:
+            generator = torch.Generator().manual_seed(config.get("center_seed", 0))
+            centers = torch.randn(self.n_modes, self.dim, generator=generator)
+            centers = centers - centers.mean(dim=0, keepdim=True)
+        return self.radius * centers / centers.norm(dim=1, keepdim=True).clamp_min(1e-6)
+
+    def _source_std_tensor(self, device):
+        return torch.as_tensor(self.source_std, dtype=torch.float32, device=device).reshape(-1)
+
+    def _sample_source(self, n_samples, device):
+        mean = self.source_mean.to(device)
+        std = self._source_std_tensor(device)
+        if std.numel() == 1:
+            return mean + std.item() * torch.randn(n_samples, self.dim, device=device)
+        if std.numel() != self.dim:
+            raise ValueError("source_std must be a scalar or length dim sequence.")
+        return mean + torch.randn(n_samples, self.dim, device=device) * std
+
+    def _sample_modes(self, n_samples):
+        mode_idx = torch.randint(self.n_modes, (n_samples,))
+        centers = self.mode_centers[mode_idx]
+        return centers + self.sigma_mode * torch.randn(n_samples, self.dim)
+
+    def sample_train_batch(self, batch_size, device):
+        idx = torch.randint(self.train.shape[0], (batch_size,))
+        x1 = self.train[idx].to(device)
+        x0 = self._sample_source(batch_size, device)
+        return x0, x1
+
+    def eval_initial(self, n_eval, device):
+        return self._sample_source(n_eval, device)
+
+    def target_eval(self, n_eval, device):
+        if n_eval <= self.test.shape[0]:
+            return self.test[:n_eval].to(device)
+        idx = torch.randint(self.test.shape[0], (n_eval,))
+        return self.test[idx].to(device)
+
+    def centers(self, device):
+        return self.mode_centers.to(device)
+
+
 def burgers_rhs(u, t, dx, nu):
     u_x = (np.roll(u, -1) - np.roll(u, 1)) / (2 * dx)
     u_xx = (np.roll(u, -1) - 2 * u + np.roll(u, 1)) / (dx**2)
@@ -212,4 +350,6 @@ class BurgersAutoregressiveProblem:
 register(DATASETS, "spiral")(SpiralProblem)
 register(DATASETS, "five_modes")(FiveModesProblem)
 register(DATASETS, "fan_modes")(FanModesProblem)
+register(DATASETS, "staged_modes")(StagedModesProblem)
+register(DATASETS, "gaussian_mixture_nd")(GaussianMixtureNDProblem)
 register(DATASETS, "burgers_autoregressive")(BurgersAutoregressiveProblem)
