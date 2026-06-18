@@ -1,0 +1,6 @@
+outs:
+- md5: 1c24a4f8d41cb84e30d25602e16e272f.dir
+  size: 592619
+  nfiles: 7
+  hash: md5
+  path: standard_25k_eval_5000

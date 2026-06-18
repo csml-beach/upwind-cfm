@@ -28,6 +28,20 @@ from .solvers import solve
 from .utils import device_from_config, environment_info, repo_root, set_seed, write_json
 
 
+def _split_batch(batch):
+    if len(batch) == 2:
+        return batch[0], batch[1], None
+    if len(batch) == 3:
+        return batch
+    raise ValueError("Expected training batch to be (x0, x1) or (x0, x1, labels).")
+
+
+def _condition_model(model, labels):
+    if labels is None:
+        return model
+    return lambda x, t: model(x, t, labels)
+
+
 def _image_batch(x, image_shape):
     return x.reshape(x.shape[0], *image_shape).clamp(-1.0, 1.0)
 
@@ -115,7 +129,8 @@ def _save_training_sample_grid(problem, model, config, device, out_dir, step):
     steps = int(eval_cfg.get("sample_grid_steps", 5))
     set_seed(int(eval_cfg.get("plot_seed", 1234)) + int(step))
     x0 = problem.eval_initial(n_samples, device)
-    traj = solve(config.get("solver", "euler"), model, x0, {"steps": steps})
+    labels = problem.eval_labels(n_samples, device) if getattr(problem, "class_conditional", False) else None
+    traj = solve(config.get("solver", "euler"), _condition_model(model, labels), x0, {"steps": steps})
     save_image_grid(traj[-1], out_dir / "samples" / f"step_{step:08d}.png", problem.image_shape, nrow=nrow)
 
 
@@ -159,12 +174,16 @@ def train_model(problem, config, device, out_dir=None):
 
     model.train()
     for step in range(start_step, total_steps):
-        x0, x1 = problem.sample_train_batch(batch_size, device)
-        x0, x1 = apply_pairing(x0, x1, config)
+        x0, x1, labels = _split_batch(problem.sample_train_batch(batch_size, device))
+        if labels is None:
+            x0, x1 = apply_pairing(x0, x1, config)
+        else:
+            x0, x1, labels = apply_pairing(x0, x1, config, labels)
+        loss_model = _condition_model(model, labels)
         optimizer.zero_grad()
         if use_amp:
             with torch.cuda.amp.autocast(enabled=True):
-                terms = method.loss(model, x0, x1)
+                terms = method.loss(loss_model, x0, x1)
                 loss = sum(terms.values())
             scaler.scale(loss).backward()
             if grad_clip is not None:
@@ -173,7 +192,7 @@ def train_model(problem, config, device, out_dir=None):
             scaler.step(optimizer)
             scaler.update()
         else:
-            terms = method.loss(model, x0, x1)
+            terms = method.loss(loss_model, x0, x1)
             loss = sum(terms.values())
             loss.backward()
             if grad_clip is not None:
@@ -274,15 +293,24 @@ def eval_cifar10(problem, model, config, device, out_dir=None):
     eval_seed = int(eval_cfg.get("eval_seed", 1234))
     nrow = int(eval_cfg.get("sample_grid_nrow", 8))
     solver_name = eval_cfg.get("solver", config.get("solver", "euler"))
-    target = problem.target_eval(n_eval, device)
-    real_reference = problem.metric_reference(n_metric, device) if eval_cfg.get("compute_fid_kid", False) else target
+    labels = problem.eval_labels(n_eval, device) if getattr(problem, "class_conditional", False) else None
+    metric_labels = problem.eval_labels(n_metric, device) if getattr(problem, "class_conditional", False) else None
+    target = problem.target_eval(n_eval, device, labels=labels) if labels is not None else problem.target_eval(n_eval, device)
+    real_reference = (
+        problem.metric_reference(n_metric, device, labels=metric_labels)
+        if eval_cfg.get("compute_fid_kid", False) and metric_labels is not None
+        else problem.metric_reference(n_metric, device)
+        if eval_cfg.get("compute_fid_kid", False)
+        else target
+    )
     set_seed(eval_seed)
     x0 = problem.eval_initial(n_eval, device)
+    eval_model = _condition_model(model, labels)
 
     metrics = {"n_eval": n_eval}
     for steps in nfe_values:
         steps = int(steps)
-        traj = solve(solver_name, model, x0, {"steps": steps})
+        traj = solve(solver_name, eval_model, x0, {"steps": steps})
         samples = traj[-1].clamp(-3.0, 3.0)
         prefix = f"nfe_{steps}"
         metrics.update(_image_stats(samples, prefix))

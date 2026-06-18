@@ -20,12 +20,16 @@ def pairing_features(x, config):
 
 
 def minibatch_ot_pair(x0, x1, config=None):
+    order = minibatch_ot_order(x0, x1, config)
+    return x0, x1[order]
+
+
+def minibatch_ot_order(x0, x1, config=None):
     x0_feat = pairing_features(x0.detach(), config)
     x1_feat = pairing_features(x1.detach(), config)
     cost = torch.cdist(x0_feat, x1_feat).pow(2).cpu().numpy()
     _, col = linear_sum_assignment(cost)
-    order = torch.as_tensor(col, device=x1.device)
-    return x0, x1[order]
+    return torch.as_tensor(col, device=x1.device)
 
 
 def _positive_median(values, eps):
@@ -46,7 +50,7 @@ def _pressure_reference_order(x0_feat, x1_feat, reference_pairing):
 
 
 @torch.no_grad()
-def pressure_aware_minibatch_ot_pair(x0, x1, config):
+def pressure_aware_minibatch_ot_order(x0, x1, config):
     """Minibatch OT with a local conditional-velocity variance cost.
 
     For each candidate pair (x0_i, x1_j), we form an interpolant point x_t,ij
@@ -72,7 +76,7 @@ def pressure_aware_minibatch_ot_pair(x0, x1, config):
     if beta < 0.0:
         raise ValueError("pressure_beta must be non-negative.")
     if beta == 0.0:
-        return minibatch_ot_pair(x0, x1, config)
+        return minibatch_ot_order(x0, x1, config)
 
     x0_detached = x0.detach()
     x1_detached = x1.detach()
@@ -106,16 +110,27 @@ def pressure_aware_minibatch_ot_pair(x0, x1, config):
 
     cost = base_cost + beta * base_scale * pressure_cost
     _, col = linear_sum_assignment(cost.cpu().numpy())
-    order = torch.as_tensor(col, device=x1.device)
+    return torch.as_tensor(col, device=x1.device)
+
+
+@torch.no_grad()
+def pressure_aware_minibatch_ot_pair(x0, x1, config):
+    order = pressure_aware_minibatch_ot_order(x0, x1, config)
     return x0, x1[order]
 
 
-def apply_pairing(x0, x1, config):
+def apply_pairing(x0, x1, config, *extras):
     pairing = config.get("pairing", "independent")
     if pairing == "independent":
-        return x0, x1
+        return (x0, x1, *extras) if extras else (x0, x1)
     if pairing == "minibatch_ot":
-        return minibatch_ot_pair(x0, x1, config)
+        order = minibatch_ot_order(x0, x1, config)
+        paired = (x0, x1[order])
+        return (*paired, *(extra[order] for extra in extras)) if extras else paired
     if pairing == "pressure_aware_minibatch_ot":
-        return pressure_aware_minibatch_ot_pair(x0, x1, config)
+        order = pressure_aware_minibatch_ot_order(x0, x1, config)
+        paired_x0, paired_x1 = x0, x1[order]
+        if not extras:
+            return paired_x0, paired_x1
+        return paired_x0, paired_x1, *(extra[order] for extra in extras)
     raise ValueError(f"Unknown pairing: {pairing}")

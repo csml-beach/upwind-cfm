@@ -2,7 +2,8 @@
   "dataset": "cifar10",
   "dataset_kwargs": {
     "data_root": "data",
-    "download": true
+    "download": true,
+    "class_conditional": true
   },
   "method": "standard_cfm",
   "method_kwargs": {},
@@ -15,7 +16,8 @@
     "channel_mults": [1, 2, 2, 4],
     "num_res_blocks": 2,
     "time_dim": 256,
-    "attention_resolutions": [16]
+    "attention_resolutions": [16],
+    "num_classes": 10
   },
   "seed": 0,
   "device": "cuda",
@@ -38,7 +40,7 @@
     "sample_grid_n": 64,
     "sample_grid_nrow": 8,
     "sample_grid_steps": 10,
-    "compute_fid_kid": true,
+    "compute_fid_kid": false,
     "eval_seed": 1234,
     "plot_seed": 1234
   },

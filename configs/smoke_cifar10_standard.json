@@ -4,7 +4,8 @@
     "fake_data": true,
     "n_train": 32,
     "n_test": 16,
-    "data_seed": 7
+    "data_seed": 7,
+    "class_conditional": true
   },
   "method": "standard_cfm",
   "method_kwargs": {},
@@ -16,7 +17,8 @@
     "channel_mults": [1, 2],
     "num_res_blocks": 1,
     "time_dim": 32,
-    "attention_resolutions": []
+    "attention_resolutions": [],
+    "num_classes": 10
   },
   "seed": 0,
   "solver": "euler",

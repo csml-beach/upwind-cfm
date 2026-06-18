@@ -140,6 +140,7 @@ class UNet2D(nn.Module):
         time_dim=256,
         attention_resolutions=(16,),
         groups=8,
+        num_classes=None,
     ):
         super().__init__()
         self.image_shape = tuple(image_shape)
@@ -148,12 +149,14 @@ class UNet2D(nn.Module):
             raise ValueError("UNet2D dim must equal product(image_shape).")
         self.dim = dim
         self.channels = channels
+        self.num_classes = num_classes
         self.time_mlp = nn.Sequential(
             SinusoidalPosEmb(time_dim),
             nn.Linear(time_dim, time_dim * 4),
             nn.SiLU(),
             nn.Linear(time_dim * 4, time_dim),
         )
+        self.label_emb = nn.Embedding(int(num_classes), time_dim) if num_classes is not None else None
 
         self.init_conv = nn.Conv2d(channels, base_channels, 3, padding=1)
         self.down_blocks = nn.ModuleList()
@@ -195,10 +198,14 @@ class UNet2D(nn.Module):
         self.final_norm = nn.GroupNorm(_group_count(in_ch, groups), in_ch)
         self.final_conv = nn.Conv2d(in_ch, channels, 3, padding=1)
 
-    def forward(self, x, t):
+    def forward(self, x, t, y=None):
         b = x.shape[0]
         h = x.reshape(b, *self.image_shape)
         t_emb = self.time_mlp(t.expand(b, 1))
+        if self.label_emb is not None:
+            if y is None:
+                raise ValueError("UNet2D was configured with num_classes and requires labels.")
+            t_emb = t_emb + self.label_emb(y.long())
         h = self.init_conv(h)
         skips = []
         for block_group, downsample in zip(self.down_blocks, self.downsamples):

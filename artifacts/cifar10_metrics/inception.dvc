@@ -1,0 +1,6 @@
+outs:
+- md5: 779eee3341918c052e567a88609c864b.dir
+  size: 95628359
+  nfiles: 1
+  hash: md5
+  path: inception

@@ -305,23 +305,26 @@ class CIFAR10Problem:
     name = "cifar10"
     image_shape = (3, 32, 32)
     dim = 3 * 32 * 32
+    num_classes = 10
 
     def __init__(self, config):
         self.data_root = Path(config.get("data_root", "data"))
         self.download = config.get("download", True)
         self.fake_data = config.get("fake_data", False)
+        self.class_conditional = bool(config.get("class_conditional", False))
         self.n_train = config.get("n_train")
         self.n_test = config.get("n_test")
         self.data_seed = config.get("data_seed", 0)
-        self.train = self._load_split(train=True)
-        self.test = self._load_split(train=False)
+        self.train, self.train_labels = self._load_split(train=True)
+        self.test, self.test_labels = self._load_split(train=False)
         self.n_train = self.train.shape[0]
         self.n_test = self.test.shape[0]
 
     def _fake_split(self, n_samples, seed_offset):
         generator = torch.Generator().manual_seed(self.data_seed + seed_offset)
         images = 2.0 * torch.rand(n_samples, *self.image_shape, generator=generator) - 1.0
-        return images.reshape(n_samples, self.dim).contiguous()
+        labels = torch.arange(n_samples, dtype=torch.long) % self.num_classes
+        return images.reshape(n_samples, self.dim).contiguous(), labels
 
     def _load_split(self, train):
         max_samples = self.n_train if train else self.n_test
@@ -336,27 +339,53 @@ class CIFAR10Problem:
 
         dataset = CIFAR10(root=str(self.data_root), train=train, download=self.download)
         data = torch.from_numpy(dataset.data).permute(0, 3, 1, 2).float()
+        labels = torch.tensor(dataset.targets, dtype=torch.long)
         data = data / 127.5 - 1.0
         if max_samples is not None:
             data = data[:max_samples]
-        return data.reshape(data.shape[0], self.dim).contiguous()
+            labels = labels[:max_samples]
+        return data.reshape(data.shape[0], self.dim).contiguous(), labels
 
     def sample_train_batch(self, batch_size, device):
         idx = torch.randint(self.train.shape[0], (batch_size,))
         x1 = self.train[idx].to(device)
         x0 = torch.randn(batch_size, self.dim, device=device)
+        if self.class_conditional:
+            return x0, x1, self.train_labels[idx].to(device)
         return x0, x1
 
     def eval_initial(self, n_eval, device):
         return torch.randn(n_eval, self.dim, device=device)
 
-    def target_eval(self, n_eval, device):
+    def eval_labels(self, n_eval, device):
+        labels = torch.arange(n_eval, dtype=torch.long, device=device)
+        return labels % self.num_classes
+
+    def _select_by_labels(self, data, data_labels, labels, device, split_name):
+        labels = labels.detach().cpu().long()
+        indices = []
+        counters = {}
+        for label in labels.tolist():
+            matches = torch.nonzero(data_labels == label, as_tuple=False).flatten()
+            if matches.numel() == 0:
+                raise ValueError(f"CIFAR-10 {split_name} split has no examples for label {label}.")
+            position = counters.get(label, 0) % matches.numel()
+            counters[label] = position + 1
+            indices.append(matches[position])
+        index = torch.stack(indices)
+        return data[index].to(device)
+
+    def target_eval(self, n_eval, device, labels=None):
+        if labels is not None:
+            return self._select_by_labels(self.test, self.test_labels, labels, device, "eval")
         if n_eval <= self.test.shape[0]:
             return self.test[:n_eval].to(device)
         idx = torch.randint(self.test.shape[0], (n_eval,))
         return self.test[idx].to(device)
 
-    def metric_reference(self, n_eval, device):
+    def metric_reference(self, n_eval, device, labels=None):
+        if labels is not None:
+            return self._select_by_labels(self.train, self.train_labels, labels, device, "train")
         if n_eval <= self.train.shape[0]:
             return self.train[:n_eval].to(device)
         idx = torch.randint(self.train.shape[0], (n_eval,))
