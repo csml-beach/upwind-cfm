@@ -56,6 +56,10 @@ history JSON, model weights, and sample grids under `runs/`.
 
 ## GPU Handoff
 
+For first bring-up, prefer the `gpu-large` VPS documented in
+`docs/remote_gpu.md`. It avoids repeated dataset/cache setup while the image
+benchmark is still changing.
+
 Render one Kubernetes Job per method and seed:
 
 ```bash
