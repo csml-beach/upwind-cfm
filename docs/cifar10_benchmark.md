@@ -138,6 +138,24 @@ EMA substantially improved the baseline. Future CIFAR method comparisons should
 use EMA evaluation, otherwise we risk comparing against an artificially weak
 image-modeling baseline.
 
+## Strong-Backbone Coupling Comparison
+
+The first method comparison after the strong baseline should use one seed for
+each coupling variant and the same large UNet/100k/EMA training recipe:
+
+1. `cifar10_standard_large.json`: independent pairing baseline, already run.
+2. `cifar10_minibatch_ot_large_8x8.json`: exact minibatch OT with 8x8 RGB cost.
+3. `cifar10_minibatch_ot_large_16x16.json`: exact minibatch OT with 16x16 RGB
+   cost.
+4. `cifar10_pressure_aware_ot_large_8x8.json`: pressure-aware minibatch OT with
+   8x8 RGB cost.
+5. `cifar10_pressure_aware_ot_large_16x16.json`: pressure-aware minibatch OT
+   with 16x16 RGB cost.
+
+Evaluate the EMA weights for all runs with the fixed 5000-sample protocol.
+Primary comparisons are FID/KID and class accuracy at NFE 5, 10, 20, and 50.
+NFE 5 and 10 are the most important for the low-NFE claim.
+
 ## Deferred Avenues
 
 Keep these as explicit follow-up branches while the first strong-backbone
