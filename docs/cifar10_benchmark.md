@@ -138,6 +138,25 @@ EMA substantially improved the baseline. Future CIFAR method comparisons should
 use EMA evaluation, otherwise we risk comparing against an artificially weak
 image-modeling baseline.
 
+## Deferred Avenues
+
+Keep these as explicit follow-up branches while the first strong-backbone
+comparison focuses on independent pairing, minibatch OT, and pressure-aware OT.
+
+1. **Sinkhorn OT instead of exact Hungarian OT.** Exact Hungarian assignment is
+   simple and deterministic at batch size 64, but the current implementation
+   computes a dense cost matrix and solves the assignment on CPU. A GPU Sinkhorn
+   coupling would be approximate, but it could make richer image costs practical,
+   including full 32x32 RGB pixel costs or larger batches. This is especially
+   relevant if 8x8 or 16x16 downsampled costs look too crude.
+
+2. **Unconditional CIFAR-10 CFM.** The current benchmark is class-conditional,
+   so labels already remove much of the multimodal ambiguity that OT might
+   otherwise help resolve. An unconditional CIFAR run would test whether OT or
+   pressure-aware coupling matters more when class labels no longer detangle the
+   target distribution. Primary metrics would be FID/KID; classifier class
+   histogram can be diagnostic but not a conditional-accuracy metric.
+
 ## GPU Handoff
 
 For first bring-up, prefer the `gpu-large` VPS documented in
