@@ -1,6 +1,0 @@
-outs:
-- md5: da5da431ca766ef56ce96907adc3a44c.dir
-  size: 17704
-  nfiles: 2
-  hash: md5
-  path: eval_with_iso_fd_w01
