@@ -33,6 +33,7 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate a trained CIFAR-10 CFM checkpoint.")
     parser.add_argument("--run-dir", required=True, help="Run directory containing config.json and model/checkpoint.")
     parser.add_argument("--checkpoint", default="model.pt", help="model.pt or checkpoint_latest.pt.")
+    parser.add_argument("--use-ema", action="store_true", help="Load EMA weights from a checkpoint payload.")
     parser.add_argument("--data-root", help="Override CIFAR-10 data root.")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--metric-device", default="cpu", help="Device for FID/KID and classifier inference.")
@@ -63,7 +64,7 @@ def main():
 
     dataset_cls = get(DATASETS, config["dataset"])
     problem = dataset_cls(config.get("dataset_kwargs", {}))
-    model = load_cifar_generator(run_dir, problem, config, args.checkpoint, device)
+    model = load_cifar_generator(run_dir, problem, config, args.checkpoint, device, use_ema=args.use_ema)
 
     out_dir = Path(args.out_dir) if args.out_dir else run_dir / "eval"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -72,6 +73,7 @@ def main():
         {
             "run_dir": str(run_dir),
             "checkpoint": args.checkpoint,
+            "use_ema": args.use_ema,
             "n_samples": args.n_samples,
             "batch_size": args.batch_size,
             "metric_batch_size": args.metric_batch_size,

@@ -15,7 +15,8 @@ baseline.
 - Training outputs sample grids; paper-facing FID/KID and classifier accuracy are
   computed afterward with `scripts/evaluate_cifar10_checkpoint.py`.
 - Outputs: `config.json`, `environment.json`, `history.json`, `metrics.json`,
-  `model.pt`, `checkpoint_latest.pt`, and `samples/*.png`.
+  `model.pt`, optional `model_ema.pt`, `checkpoint_latest.pt`, and
+  `samples/*.png`.
 
 ## First Suite
 
@@ -99,6 +100,43 @@ python scripts/train_cifar10_classifier.py \
   --epochs 30 \
   --batch-size 256
 ```
+
+## Strong Standard Baseline
+
+The first compact conditional UNet baseline was useful for pipeline bring-up, but
+it was not strong enough for final method comparison. A larger standard CFM was
+trained on the `gpu-large` VPS with:
+
+- Config: `configs/cifar10_standard_large.json`
+- Model size: `101.4M` parameters, about `2.07x` the compact `48.9M` UNet.
+- Training: `100000` optimizer steps, batch size `64`, AMP, gradient clipping
+  `0.5`, learning rate `1e-4`.
+- EMA: enabled for the continuation from the step-20000 checkpoint with
+  `ema_decay=0.999`.
+- Artifact bundle: `artifacts/cifar10_benchmark/standard_large_100k/`
+
+The full optimizer checkpoint is intentionally not DVC-tracked because it is
+about 1.9 GB and mostly needed for resuming, not for evaluation. The tracked
+bundle keeps the final raw and EMA model weights, run metadata, history, logs,
+metric JSON/CSV files, and sample grids.
+
+Final 5000-sample evaluation against CIFAR-10 test references:
+
+| Weights | NFE | FID | KID | Class accuracy |
+| --- | ---: | ---: | ---: | ---: |
+| Raw | 5 | 40.69 | 0.02569 | 71.70% |
+| Raw | 10 | 28.10 | 0.01568 | 82.86% |
+| Raw | 20 | 24.88 | 0.01298 | 84.26% |
+| Raw | 50 | 23.68 | 0.01067 | 84.18% |
+| EMA | 5 | 35.56 | 0.02241 | 77.96% |
+| EMA | 10 | 24.75 | 0.01406 | 86.30% |
+| EMA | 20 | 21.01 | 0.01105 | 87.84% |
+| EMA | 50 | 18.85 | 0.00816 | 87.32% |
+
+Takeaway: capacity alone was not enough at 19000 steps, but longer training plus
+EMA substantially improved the baseline. Future CIFAR method comparisons should
+use EMA evaluation, otherwise we risk comparing against an artificially weak
+image-modeling baseline.
 
 ## GPU Handoff
 

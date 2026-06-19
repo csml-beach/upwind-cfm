@@ -134,7 +134,34 @@ def _save_training_sample_grid(problem, model, config, device, out_dir, step):
     save_image_grid(traj[-1], out_dir / "samples" / f"step_{step:08d}.png", problem.image_shape, nrow=nrow)
 
 
-def _save_checkpoint(path, model, optimizer, scaler, step, history):
+class ModelEMA:
+    def __init__(self, model, decay):
+        self.decay = float(decay)
+        self.shadow = {
+            name: param.detach().clone()
+            for name, param in model.state_dict().items()
+            if torch.is_floating_point(param)
+        }
+
+    @torch.no_grad()
+    def update(self, model):
+        state = model.state_dict()
+        for name, shadow_param in self.shadow.items():
+            shadow_param.mul_(self.decay).add_(state[name].detach(), alpha=1.0 - self.decay)
+
+    def state_dict(self):
+        return {"decay": self.decay, "shadow": self.shadow}
+
+    def load_state_dict(self, state):
+        self.decay = float(state.get("decay", self.decay))
+        self.shadow = {name: value.detach().clone() for name, value in state["shadow"].items()}
+
+    def model_state_dict(self, model):
+        state = model.state_dict()
+        return {name: self.shadow.get(name, value).detach().clone() for name, value in state.items()}
+
+
+def _save_checkpoint(path, model, optimizer, scaler, step, history, ema=None):
     payload = {
         "model": model.state_dict(),
         "optimizer": optimizer.state_dict(),
@@ -143,7 +170,18 @@ def _save_checkpoint(path, model, optimizer, scaler, step, history):
     }
     if scaler is not None:
         payload["scaler"] = scaler.state_dict()
+    if ema is not None:
+        payload["ema"] = ema.state_dict()
+        payload["ema_model"] = ema.model_state_dict(model)
     torch.save(payload, path)
+
+
+def _append_history_row(history, step, loss, terms):
+    row = {"step": step, "epoch": step, "loss": float(loss.detach().cpu())}
+    row.update({k: float(v.detach().cpu()) for k, v in terms.items()})
+    history.append(row)
+    print(row, flush=True)
+    return row
 
 
 def train_model(problem, config, device, out_dir=None):
@@ -155,10 +193,14 @@ def train_model(problem, config, device, out_dir=None):
     batch_size = train_cfg.get("batch_size", 256)
     log_every = train_cfg.get("log_every", 100)
     checkpoint_every = int(train_cfg.get("checkpoint_every", 0))
+    keep_checkpoints = bool(train_cfg.get("keep_checkpoints", False))
+    stop_on_nonfinite = bool(train_cfg.get("stop_on_nonfinite", True))
+    save_failed_checkpoint = bool(train_cfg.get("save_failed_checkpoint", False))
     sample_every = int(train_cfg.get("sample_every", 0))
     grad_clip = train_cfg.get("grad_clip")
     use_amp = bool(train_cfg.get("amp", False)) and device.type == "cuda"
     scaler = torch.cuda.amp.GradScaler(enabled=use_amp) if device.type == "cuda" else None
+    ema = ModelEMA(model, train_cfg.get("ema_decay", 0.9999)) if train_cfg.get("ema", False) else None
     checkpoint_path = Path(out_dir) / "checkpoint_latest.pt" if out_dir else None
     start_step = 0
     history = []
@@ -168,11 +210,14 @@ def train_model(problem, config, device, out_dir=None):
         optimizer.load_state_dict(checkpoint["optimizer"])
         if scaler is not None and "scaler" in checkpoint:
             scaler.load_state_dict(checkpoint["scaler"])
+        if ema is not None and "ema" in checkpoint:
+            ema.load_state_dict(checkpoint["ema"])
         start_step = int(checkpoint.get("step", 0))
         history = checkpoint.get("history", [])
         print(f"Resumed {checkpoint_path} from step {start_step}", flush=True)
 
     model.train()
+    final_step = start_step
     for step in range(start_step, total_steps):
         x0, x1, labels = _split_batch(problem.sample_train_batch(batch_size, device))
         if labels is None:
@@ -198,22 +243,32 @@ def train_model(problem, config, device, out_dir=None):
             if grad_clip is not None:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), float(grad_clip))
             optimizer.step()
+        if ema is not None:
+            ema.update(model)
 
         current_step = step + 1
+        final_step = current_step
         if current_step % log_every == 0 or current_step == 1 or current_step == total_steps:
-            row = {"step": current_step, "epoch": current_step, "loss": float(loss.detach().cpu())}
-            row.update({k: float(v.detach().cpu()) for k, v in terms.items()})
-            history.append(row)
-            print(row, flush=True)
+            _append_history_row(history, current_step, loss, terms)
+        if stop_on_nonfinite and not torch.isfinite(loss.detach()):
+            if current_step % log_every != 0 and current_step != 1 and current_step != total_steps:
+                _append_history_row(history, current_step, loss, terms)
+            if checkpoint_path and save_failed_checkpoint:
+                failed_path = checkpoint_path.with_name(f"checkpoint_failed_step_{current_step:08d}.pt")
+                _save_checkpoint(failed_path, model, optimizer, scaler, current_step, history, ema=ema)
+            raise FloatingPointError(f"Non-finite training loss at step {current_step}.")
         if checkpoint_path and checkpoint_every > 0 and current_step % checkpoint_every == 0:
-            _save_checkpoint(checkpoint_path, model, optimizer, scaler, current_step, history)
+            _save_checkpoint(checkpoint_path, model, optimizer, scaler, current_step, history, ema=ema)
+            if keep_checkpoints:
+                step_path = checkpoint_path.with_name(f"checkpoint_step_{current_step:08d}.pt")
+                _save_checkpoint(step_path, model, optimizer, scaler, current_step, history, ema=ema)
         if out_dir and sample_every > 0 and current_step % sample_every == 0:
             model.eval()
             _save_training_sample_grid(problem, model, config, device, Path(out_dir), current_step)
             model.train()
     if checkpoint_path:
-        _save_checkpoint(checkpoint_path, model, optimizer, scaler, total_steps, history)
-    return model, history
+        _save_checkpoint(checkpoint_path, model, optimizer, scaler, final_step, history, ema=ema)
+    return model, history, ema
 
 
 @torch.no_grad()
@@ -344,11 +399,13 @@ def run(config):
     out_dir.mkdir(parents=True, exist_ok=True)
     write_json(out_dir / "config.json", config)
     write_json(out_dir / "environment.json", environment_info())
-    model, history = train_model(problem, config, device, out_dir=out_dir)
+    model, history, ema = train_model(problem, config, device, out_dir=out_dir)
     model.eval()
     metrics = evaluate(problem, model, config, device, out_dir=out_dir)
 
     torch.save(model.state_dict(), out_dir / "model.pt")
+    if ema is not None:
+        torch.save(ema.model_state_dict(model), out_dir / "model_ema.pt")
     write_json(out_dir / "history.json", history)
     write_json(out_dir / "metrics.json", metrics)
     print(f"Saved run to {out_dir}")

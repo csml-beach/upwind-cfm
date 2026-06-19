@@ -56,3 +56,33 @@ pip install --no-cache-dir torchmetrics torch-fidelity numpy scipy matplotlib tq
 
 Old `~/runs` was cleared during setup to free disk. Root disk had about 42 GB
 free after cleanup.
+
+## CIFAR Checkpoint Hygiene
+
+For large CIFAR UNet runs, avoid keeping every optimizer checkpoint on the VPS.
+The 101M-parameter model's resumable `checkpoint_latest.pt` is about 1.9 GB
+because it includes raw weights, optimizer state, scaler state, and EMA weights.
+Use sparse checkpointing for long runs:
+
+```json
+"checkpoint_every": 10000,
+"keep_checkpoints": false,
+"stop_on_nonfinite": true,
+"save_failed_checkpoint": false
+```
+
+For DVC/paper artifacts, prefer standalone evaluable weights:
+
+```text
+model.pt
+model_ema.pt
+config.json
+history.json
+environment.json
+eval_*/*.csv
+eval_*/*.json
+eval_*/samples/*.png
+```
+
+Only sync and DVC-track `checkpoint_latest.pt` when we specifically need to
+resume the exact optimizer state later.

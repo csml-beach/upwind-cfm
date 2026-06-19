@@ -198,11 +198,16 @@ def generate_cifar_samples(model, problem, config, n_samples, nfe, batch_size, s
     return samples, labels
 
 
-def load_cifar_generator(run_dir, problem, config, checkpoint_name, device):
+def load_cifar_generator(run_dir, problem, config, checkpoint_name, device, use_ema=False):
     model = build_model(config.get("model", "unet2d"), problem.dim, config).to(device)
     checkpoint_path = Path(run_dir) / checkpoint_name
     checkpoint = torch.load(checkpoint_path, map_location=device)
-    state = checkpoint.get("model", checkpoint)
+    if use_ema:
+        if not isinstance(checkpoint, dict) or "ema_model" not in checkpoint:
+            raise ValueError(f"{checkpoint_path} does not contain EMA weights.")
+        state = checkpoint["ema_model"]
+    else:
+        state = checkpoint.get("model", checkpoint)
     model.load_state_dict(state)
     model.eval()
     return model

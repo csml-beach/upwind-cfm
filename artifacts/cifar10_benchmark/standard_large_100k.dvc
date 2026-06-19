@@ -1,0 +1,6 @@
+outs:
+- md5: f9e545098f3bc7cf001ab13cfea9b35d.dir
+  size: 812475045
+  nfiles: 21
+  hash: md5
+  path: standard_large_100k
