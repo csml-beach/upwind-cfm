@@ -156,6 +156,85 @@ Evaluate the EMA weights for all runs with the fixed 5000-sample protocol.
 Primary comparisons are FID/KID and class accuracy at NFE 5, 10, 20, and 50.
 NFE 5 and 10 are the most important for the low-NFE claim.
 
+Result location:
+
+- `results/cifar10_coupling_large_100k/`
+- `results/cifar10_coupling_large_100k/ema_5000_eval_summary.csv`
+
+All four coupling runs completed on the `gpu-large` VPS and were evaluated from
+EMA weights with 5000 generated samples, balanced class labels, CIFAR-10 test
+references, and NFEs `{5, 10, 20, 50}`.
+
+| Method | Cost geometry | NFE 5 FID | NFE 10 FID | NFE 20 FID | NFE 50 FID | NFE 50 acc |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| minibatch OT | 16x16 RGB | **33.85** | **26.15** | **22.72** | **20.61** | **86.32%** |
+| pressure-aware OT | 16x16 RGB | 34.66 | 26.49 | 22.99 | 20.77 | 85.72% |
+| pressure-aware OT | 8x8 RGB | 35.77 | 26.95 | 23.11 | 20.75 | 84.62% |
+| minibatch OT | 8x8 RGB | 36.10 | 27.30 | 23.56 | 21.27 | 85.54% |
+
+Interpretation:
+
+- The proper image metrics do **not** confirm the earlier trainer-side pixel-MSE
+  hint that pressure-aware 8x8 was best.
+- In this one-seed comparison, exact minibatch OT with 16x16 RGB costs is the
+  strongest method across FID, KID, and classifier accuracy.
+- Pressure-aware OT is competitive but does not beat the strongest OT baseline.
+  This is a useful negative/tempering result: the pressure term should not be
+  claimed as an image-scale improvement unless future seeds or variants change
+  the picture.
+- The image pipeline itself is now usable for method comparison: EMA checkpoints,
+  fixed-label sample generation, FID/KID, and conditional classifier accuracy all
+  work end to end.
+
+## Unconditional Coupling Probe
+
+The class-conditional CIFAR benchmark may make the coupling problem too easy:
+labels already tell the velocity field which semantic mode to target. To make
+the test closer in spirit to the staged/multimodal toy problems, we also trained
+the same large UNet without class labels as model input.
+
+Result location:
+
+- `results/cifar10_uncond_coupling_large_100k/`
+- `results/cifar10_uncond_coupling_large_100k/ema_5000_eval_allseeds_aggregate.csv`
+- `results/cifar10_uncond_coupling_large_100k/ema_5000_eval_allseeds_raw.csv`
+
+This probe used the same 100k-step large-UNet/EMA recipe as the conditional
+runs, but with `class_conditional=false` and no UNet label embedding.
+Evaluation used 5000 generated samples, CIFAR-10 test references, and
+classifier-predicted class histogram diagnostics instead of conditional
+accuracy.
+
+Three-seed EMA evaluation:
+
+| Method | Cost geometry | NFE 5 FID | NFE 10 FID | NFE 20 FID | NFE 50 FID |
+| --- | --- | ---: | ---: | ---: | ---: |
+| pressure-aware OT | 16x16 RGB | **41.25 ± 0.25** | **28.48 ± 0.19** | **23.66 ± 0.24** | **20.95 ± 0.21** |
+| minibatch OT | 16x16 RGB | 41.34 ± 0.23 | 28.89 ± 0.16 | 23.95 ± 0.21 | 21.07 ± 0.23 |
+| independent | none | 52.78 ± 0.20 | 31.31 ± 0.05 | 24.82 ± 0.29 | 21.65 ± 0.27 |
+
+Class-histogram KL-to-uniform:
+
+| Method | NFE 5 KL | NFE 10 KL | NFE 20 KL | NFE 50 KL |
+| --- | ---: | ---: | ---: | ---: |
+| pressure-aware OT | 0.1225 | 0.0246 | **0.0058** | 0.0022 |
+| minibatch OT | 0.1250 | 0.0259 | 0.0064 | **0.0018** |
+| independent | 0.2192 | 0.0494 | 0.0094 | 0.0028 |
+
+Interpretation:
+
+- Removing class conditioning makes the low-NFE problem more discriminating:
+  independent pairing is much worse at NFE 5/10, while OT-style couplings help.
+- Pressure-aware OT modestly beats minibatch OT at every NFE in the three-seed
+  aggregate. The gap is small, but it replicated without retuning.
+- The main image-scale effect is still OT-style coupling versus independent
+  pairing. The pressure-aware term is a smaller improvement on top of that.
+- The classifier histogram diagnostics do not suggest class collapse. Entropy is
+  near `log(10)` by NFE 20/50 and KL-to-uniform is small.
+- This is currently the strongest image-scale positive signal for pressure-aware
+  coupling. It should be framed as a modest but consistent low-NFE improvement
+  in the harder, label-free CIFAR setting.
+
 ## Deferred Avenues
 
 Keep these as explicit follow-up branches while the first strong-backbone
@@ -163,10 +242,15 @@ comparison focuses on independent pairing, minibatch OT, and pressure-aware OT.
 
 1. **Sinkhorn OT instead of exact Hungarian OT.** Exact Hungarian assignment is
    simple and deterministic at batch size 64, but the current implementation
-   computes a dense cost matrix and solves the assignment on CPU. A GPU Sinkhorn
-   coupling would be approximate, but it could make richer image costs practical,
-   including full 32x32 RGB pixel costs or larger batches. This is especially
-   relevant if 8x8 or 16x16 downsampled costs look too crude.
+   computes a dense cost matrix and solves the assignment on CPU. The implemented
+   `sinkhorn_ot` and `pressure_aware_sinkhorn_ot` pairings compute a balanced
+   entropic OT plan on torch tensors, then project the plan to target indices
+   before applying the usual CFM loss. This is still a hard-pair training
+   interface, not a full soft-plan CFM objective. The default greedy projection
+   preserves one-to-one target use and keeps labels aligned with full-resolution
+   target images. It is useful for testing richer costs, including full 32x32
+   RGB pixel costs or larger batches, but it should be reported as approximate
+   Sinkhorn-projected coupling rather than exact minibatch OT.
 
 2. **Unconditional CIFAR-10 CFM.** The current benchmark is class-conditional,
    so labels already remove much of the multimodal ambiguity that OT might

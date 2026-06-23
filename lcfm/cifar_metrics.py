@@ -98,6 +98,36 @@ def classifier_metrics(classifier, images_uint8, labels, batch_size, device):
     }
 
 
+@torch.no_grad()
+def classifier_distribution_metrics(classifier, images_uint8, batch_size, device):
+    counts = torch.zeros(len(CIFAR10_CLASSES), dtype=torch.long)
+    confidence_sum = 0.0
+    total = 0
+
+    for start in range(0, images_uint8.shape[0], batch_size):
+        end = min(start + batch_size, images_uint8.shape[0])
+        images = uint8_to_classifier_float(images_uint8[start:end].to(device))
+        logits = classifier(images)
+        probs = torch.softmax(logits, dim=1)
+        confidence, pred = probs.max(dim=1)
+        counts += torch.bincount(pred.cpu(), minlength=len(CIFAR10_CLASSES))
+        confidence_sum += float(confidence.sum().item())
+        total += int(pred.numel())
+
+    probs = counts.float() / max(total, 1)
+    uniform = torch.full_like(probs, 1.0 / len(CIFAR10_CLASSES))
+    nonzero = probs > 0
+    entropy = float(-(probs[nonzero] * probs[nonzero].log()).sum().item()) if total else 0.0
+    kl_uniform = float((probs[nonzero] * (probs[nonzero] / uniform[nonzero]).log()).sum().item()) if total else 0.0
+    histogram = {name: float(probs[idx].item()) for idx, name in enumerate(CIFAR10_CLASSES)}
+    return {
+        "classifier_prediction_confidence": float(confidence_sum / total) if total else 0.0,
+        "classifier_prediction_entropy": entropy,
+        "classifier_prediction_kl_to_uniform": kl_uniform,
+        "classifier_prediction_histogram": histogram,
+    }
+
+
 def _reference_indices(labels, data_labels):
     labels = labels.detach().cpu().long()
     indices = []

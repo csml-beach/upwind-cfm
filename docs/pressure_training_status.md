@@ -296,3 +296,38 @@ than, the minibatch OT baseline. On gm16, W1 stays about 2.591-2.592 and hit rat
 across the whole beta range, slightly worse than minibatch OT. Thus beta is not a fragile tuning
 knob here, but it also is not a strong rescue lever. The advantage, if any, is robustness and
 simplicity rather than a large beta-tuned win.
+
+## Strong GM16 Sinkhorn Follow-Up
+
+After adding Sinkhorn-projected pairing, local strong GM16 probes used the capacity-audit recipe
+(`hidden=256`, `depth=4`, `4000` epochs, batch size 64, Euler-5 evaluation). The point was to
+avoid judging coupling variants in the earlier low-hit, undertrained regime.
+
+Outputs:
+
+- `results/gm16_strong_sinkhorn_10seed/`
+- `results/gm16_pressure_sinkhorn_sweep/`
+
+Ten-seed result:
+
+| variant | W1 mean | W1 std | W2 mean | hit |
+| --- | ---: | ---: | ---: | ---: |
+| Iso-FD w0.01 | 1.292 | 0.064 | 1.739 | 0.888 |
+| minibatch OT | 1.298 | 0.099 | 1.679 | 0.847 |
+| pressure-aware Sinkhorn OT | 1.298 | 0.044 | 1.687 | 0.838 |
+| pressure-aware OT | 1.314 | 0.088 | 1.711 | 0.849 |
+| Sinkhorn OT | 1.342 | 0.115 | 1.750 | 0.839 |
+| independent | 1.758 | 0.128 | 2.026 | 0.546 |
+| Iso-FD w0.1 | 4.364 | 0.269 | 4.419 | 0.072 |
+
+Interpretation:
+
+- Strong GM16 confirms that OT-style coupling and very light Iso-FD beat independent.
+- Iso-FD is highly weight-sensitive: w0.01 is competitive, while w0.1 collapses endpoint
+  quality. It is a serious tuned baseline, not something we can ignore.
+- Pressure-aware Sinkhorn is stable and competitive with exact OT, but it does not clearly
+  dominate tuned Iso-FD or exact minibatch OT.
+- The pressure-aware Sinkhorn sweep found a broad useful region around Sinkhorn epsilon scale
+  0.2. Varying `pressure_beta` mattered less than epsilon. Thus GM16 currently supports
+  Sinkhorn-projected coupling as a robust coupling mechanism more strongly than it supports the
+  pressure term as the main driver.

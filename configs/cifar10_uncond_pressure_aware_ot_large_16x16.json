@@ -1,0 +1,61 @@
+{
+  "dataset": "cifar10",
+  "dataset_kwargs": {
+    "data_root": "data",
+    "download": true,
+    "class_conditional": false
+  },
+  "method": "standard_cfm",
+  "method_kwargs": {},
+  "pairing": "pressure_aware_minibatch_ot",
+  "pairing_kwargs": {
+    "pressure_beta": 0.2,
+    "pressure_t": "random",
+    "reference_pairing": "minibatch_ot",
+    "cost_feature": "downsampled_pixels",
+    "image_shape": [3, 32, 32],
+    "downsample_size": 16
+  },
+  "variant": "uncond_pressure_aware_ot_large_16x16",
+  "model": "unet2d",
+  "model_kwargs": {
+    "image_shape": [3, 32, 32],
+    "base_channels": 160,
+    "channel_mults": [1, 2, 2, 4],
+    "num_res_blocks": 3,
+    "time_dim": 384,
+    "attention_resolutions": [16]
+  },
+  "seed": 0,
+  "device": "cuda",
+  "solver": "euler",
+  "train": {
+    "batch_size": 64,
+    "max_steps": 100000,
+    "log_every": 100,
+    "checkpoint_every": 10000,
+    "sample_every": 5000,
+    "lr": 0.0001,
+    "grad_clip": 0.5,
+    "amp": true,
+    "resume": true,
+    "ema": true,
+    "ema_decay": 0.999,
+    "keep_checkpoints": false,
+    "stop_on_nonfinite": true,
+    "save_failed_checkpoint": false
+  },
+  "eval": {
+    "n_eval": 256,
+    "fid_n_eval": 2048,
+    "nfe_values": [5, 10, 20, 50],
+    "sample_grid_n": 64,
+    "sample_grid_nrow": 8,
+    "sample_grid_steps": 10,
+    "compute_fid_kid": false,
+    "eval_seed": 1234,
+    "plot_seed": 1234
+  },
+  "out_dir": "results/cifar10_uncond_low_nfe/local/runs",
+  "run_name": "cifar10_uncond_pressure_aware_ot_large_16x16_seed0"
+}

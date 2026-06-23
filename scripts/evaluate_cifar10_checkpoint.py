@@ -11,6 +11,7 @@ from lcfm import datasets  # noqa: F401
 from lcfm import models  # noqa: F401
 from lcfm.cifar_metrics import (
     CIFAR10_CLASSES,
+    classifier_distribution_metrics,
     classifier_metrics,
     fid_kid_metrics,
     flat_to_uint8_images,
@@ -43,6 +44,7 @@ def main():
     parser.add_argument("--nfe-values", default="5,10,20,50")
     parser.add_argument("--eval-seed", type=int, default=1234)
     parser.add_argument("--reference-split", choices=["train", "test"], default="test")
+    parser.add_argument("--class-conditional", action="store_true", help="Force class-conditional sampling even if the saved config is unconditional.")
     parser.add_argument("--kid-subset-size", type=int, default=100)
     parser.add_argument("--classifier-checkpoint")
     parser.add_argument("--skip-fid-kid", action="store_true")
@@ -56,7 +58,9 @@ def main():
     if args.data_root is not None:
         config.setdefault("dataset_kwargs", {})["data_root"] = args.data_root
         config.setdefault("dataset_kwargs", {})["download"] = False
-    config.setdefault("dataset_kwargs", {})["class_conditional"] = True
+    config.setdefault("dataset_kwargs", {})
+    if args.class_conditional:
+        config["dataset_kwargs"]["class_conditional"] = True
 
     device = torch.device(args.device)
     metric_device = torch.device(args.metric_device)
@@ -80,6 +84,7 @@ def main():
             "nfe_values": parse_nfe_values(args.nfe_values),
             "eval_seed": args.eval_seed,
             "reference_split": args.reference_split,
+            "class_conditional": bool(config.get("dataset_kwargs", {}).get("class_conditional", False)),
             "skip_fid_kid": args.skip_fid_kid,
             "skip_classifier": args.skip_classifier,
             "classifier_checkpoint": args.classifier_checkpoint,
@@ -148,6 +153,8 @@ def main():
 
         if classifier is not None and labels is not None:
             nfe_metrics.update(classifier_metrics(classifier, fake_uint8, labels, args.metric_batch_size, metric_device))
+        elif classifier is not None:
+            nfe_metrics.update(classifier_distribution_metrics(classifier, fake_uint8, args.metric_batch_size, metric_device))
 
         all_metrics["nfe"][str(nfe)] = nfe_metrics
         rows.append({key: value for key, value in nfe_metrics.items() if not isinstance(value, (dict, list))})

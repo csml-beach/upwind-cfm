@@ -1,0 +1,38 @@
+{
+  "dataset": "staged_modes",
+  "dataset_kwargs": {
+    "n_train": 256,
+    "n_test": 128,
+    "sigma_mode": 0.2,
+    "source_std": 0.15
+  },
+  "method": "standard_cfm",
+  "model": "mlp",
+  "seed": 42,
+  "solver": "euler",
+  "solver_kwargs": {
+    "steps": 5,
+    "noise": 0.0
+  },
+  "pairing": "pressure_aware_sinkhorn_ot",
+  "pairing_kwargs": {
+    "pressure_beta": 0.2,
+    "pressure_t": "random",
+    "reference_pairing": "sinkhorn_ot",
+    "sinkhorn_iterations": 20,
+    "sinkhorn_epsilon_scale": 0.2,
+    "sinkhorn_projection": "greedy"
+  },
+  "train": {
+    "batch_size": 64,
+    "epochs": 5,
+    "log_every": 1,
+    "lr": 0.001
+  },
+  "eval": {
+    "n_eval": 128,
+    "mode_p_min": 0.05,
+    "hit_radius": 0.6
+  },
+  "run_name": "smoke_staged_modes_pressure_aware_sinkhorn_ot"
+}

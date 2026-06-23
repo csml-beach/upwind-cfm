@@ -53,9 +53,14 @@ The older flattened Burgers surface-generation task should not be used for new c
 
 - `independent`: default independent source-target pairing.
 - `minibatch_ot`: Hungarian assignment on squared Euclidean source-target minibatch costs before applying the method loss.
+- `sinkhorn_ot`: balanced entropic OT plan on squared Euclidean source-target
+  costs, projected back to target indices before applying the method loss. The
+  default projection is greedy one-to-one matching from Sinkhorn plan mass.
 - `pressure_aware_minibatch_ot`: Hungarian assignment with an added scalar local
   conditional-velocity-variance cost. This is a pressure-aware coupling design:
   it changes the minibatch pairing while leaving the CFM velocity target unchanged.
+- `pressure_aware_sinkhorn_ot`: the same pressure-aware cost solved with
+  Sinkhorn plus projection instead of exact Hungarian assignment.
 
 Pairing is a training-time batch transform. Methods still receive only `(x0, x1)` and do not need method-specific OT logic.
 

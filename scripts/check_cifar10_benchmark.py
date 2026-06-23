@@ -9,7 +9,15 @@ import torch
 from lcfm.datasets import CIFAR10Problem
 from lcfm.cifar_metrics import build_cifar_resnet18, flat_to_uint8_images, make_eval_labels
 from lcfm.models import build_model
-from lcfm.pairing import apply_pairing, minibatch_ot_pair, pairing_features, pressure_aware_minibatch_ot_pair
+from lcfm.pairing import (
+    apply_pairing,
+    minibatch_ot_pair,
+    pairing_features,
+    pressure_aware_minibatch_ot_pair,
+    pressure_aware_sinkhorn_ot_pair,
+    sinkhorn_ot_pair,
+    sinkhorn_plan_from_cost,
+)
 from lcfm.utils import set_seed
 
 
@@ -71,6 +79,30 @@ def main():
         match = torch.nonzero(torch.all(x1 == row, dim=1), as_tuple=False).flatten()[0]
         assert_true(torch.equal(label, labels[match]), "Paired labels should follow paired target images.")
 
+    sinkhorn_cfg = {
+        "pairing_kwargs": {
+            "cost_feature": "downsampled_pixels",
+            "image_shape": [3, 32, 32],
+            "downsample_size": 8,
+            "sinkhorn_iterations": 10,
+            "sinkhorn_epsilon_scale": 0.2,
+            "sinkhorn_projection": "greedy",
+        }
+    }
+    sinkhorn_cost = torch.cdist(pairing_features(x0, sinkhorn_cfg), pairing_features(x1, sinkhorn_cfg)).pow(2)
+    sinkhorn_plan = sinkhorn_plan_from_cost(sinkhorn_cost, sinkhorn_cfg)
+    assert_true(torch.allclose(sinkhorn_plan.sum(dim=0), torch.full((4,), 0.25), atol=1e-3), "Sinkhorn columns should sum to 1/batch.")
+    assert_true(torch.allclose(sinkhorn_plan.sum(dim=1), torch.full((4,), 0.25), atol=1e-3), "Sinkhorn rows should sum to 1/batch.")
+    _, x1_sinkhorn = sinkhorn_ot_pair(x0, x1, sinkhorn_cfg)
+    assert_true(x1_sinkhorn.shape == x1.shape, "Sinkhorn OT should preserve full image vectors.")
+    _, x1_sinkhorn_paired, labels_sinkhorn = apply_pairing(x0, x1, {"pairing": "sinkhorn_ot", **sinkhorn_cfg}, labels)
+    assert_true(torch.unique(labels_sinkhorn).numel() <= labels.numel(), "Sinkhorn paired labels should remain valid labels.")
+    assert_true(
+        torch.unique(torch.stack([torch.nonzero(torch.all(x1 == row, dim=1), as_tuple=False).flatten()[0] for row in x1_sinkhorn_paired])).numel()
+        == x1.shape[0],
+        "Greedy Sinkhorn projection should select each target once.",
+    )
+
     pressure_cfg = {
         "pairing_kwargs": {
             "pressure_beta": 0.0,
@@ -81,6 +113,16 @@ def main():
     }
     _, x1_pressure = pressure_aware_minibatch_ot_pair(x0, x1, pressure_cfg)
     assert_true(torch.allclose(x1_pressure, x1_ot), "pressure_beta=0 should match minibatch OT.")
+    pressure_sinkhorn_cfg = {
+        "pairing_kwargs": {
+            **sinkhorn_cfg["pairing_kwargs"],
+            "pressure_beta": 0.0,
+            "pressure_t": 0.5,
+            "reference_pairing": "sinkhorn_ot",
+        }
+    }
+    _, x1_pressure_sinkhorn = pressure_aware_sinkhorn_ot_pair(x0, x1, pressure_sinkhorn_cfg)
+    assert_true(torch.allclose(x1_pressure_sinkhorn, x1_sinkhorn), "pressure_beta=0 should match Sinkhorn OT.")
 
     eval_labels = make_eval_labels(23, torch.device("cpu"))
     assert_true(eval_labels.tolist()[:12] == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1], "Eval labels should cycle through CIFAR classes.")
