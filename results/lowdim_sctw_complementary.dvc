@@ -1,0 +1,6 @@
+outs:
+- md5: 8d74ba4749939a4fd7e0e22927f4c38f.dir
+  size: 4525097
+  nfiles: 40
+  hash: md5
+  path: lowdim_sctw_complementary

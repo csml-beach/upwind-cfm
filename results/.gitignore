@@ -7,3 +7,5 @@
 /gm16_pressure_sinkhorn_sweep
 /gm16_strong_sinkhorn_10seed
 /gm16_strong_sinkhorn_3seed
+/gm16_sctw_schedule_eval
+/lowdim_sctw_complementary
