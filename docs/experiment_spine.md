@@ -1,11 +1,12 @@
 # Experiment Spine
 
-This repo now separates problems, methods, solvers, metrics, and run configuration so we can compare Lagrangian Consistency variants against baselines without duplicating whole scripts.
+This repo separates problems, training methods, pairings, solvers, sampler schedules, metrics, and
+run configuration so we can compare low-NFE flow-matching ideas without duplicating whole scripts.
 
 ## Design Goals
 
 - Keep the code small and readable.
-- Register methods and solvers by name.
+- Register methods, pairings, solvers, and schedules by name.
 - Keep training regularization separate from inference-time solvers.
 - Write comparable run artifacts for every experiment.
 - Use Burgers only as an autoregressive dynamics task, not flattened surface generation.
@@ -19,6 +20,7 @@ lcfm/
   losses.py         # standard CFM, LC, Iso-FD, directional regularization
   pairing.py        # optional training-time source-target batch pairing
   solvers.py        # Euler, velocity-smoothed Euler, Heun
+  schedules.py      # uniform/nonuniform time grids and self-curvature profiles
   metrics.py        # exact empirical W1/W2 matching, path length, acceleration, RMSE, temporal TV
   experiment.py     # shared train/eval loop
 scripts/
@@ -37,6 +39,9 @@ configs/
 - `gaussian_mixture_nd`: oracle-compatible high-dimensional Gaussian mixture benchmark; the
   default config uses eight simplex-like modes in 16 dimensions.
 - `cifar10`: flattened 32x32 RGB image benchmark with optional fake-data smoke mode.
+- `staged_shapes_easy`: flattened 32x32 RGB procedural image benchmark with five
+  controlled shape modes at unequal positions/scales, intended as an image-like
+  analogue of `staged_modes`.
 - `burgers_autoregressive`: learns frame-to-next-frame flow and rolls out autoregressively.
 
 The older flattened Burgers surface-generation task should not be used for new comparisons.
@@ -70,10 +75,29 @@ Pairing is a training-time batch transform. Methods still receive only `(x0, x1)
 - `velocity_smoothed_euler`: the previous projection-based velocity smoothing solver, renamed to avoid calling it upwind.
 - `heun`: second-order predictor-corrector baseline.
 
-## Image Benchmark
+## Registered / Tested Sampler Schedules
+
+Schedules are inference-time choices. They should not be confused with training methods or
+pairing rules.
+
+- `uniform`: equally spaced time grid.
+- `e1_warped`: Self-Curvature Time Warping. It probes the trained model on a fine Euler rollout,
+  estimates the model-side material-derivative/self-curvature profile, and places Euler knots at
+  equal mass of a tempered profile.
+- `power`: hand-designed nonuniform grids such as early, late, or symmetric power schedules.
+
+The active paper direction lives here, not in `losses.py`: the current method candidate changes
+the sampling mesh after training.
+
+## Image Benchmarks
 
 The CIFAR-10 low-NFE benchmark uses `unet2d`, image sample grids, optional FID/KID, step-based
 training, checkpoints, resume, and fixed-seed NFE comparisons. See `docs/cifar10_benchmark.md`.
+
+`staged_shapes_easy` uses the same image training/evaluation path but avoids natural-image
+ambiguity: a central source blob transports to five simple rendered target modes. Its current
+purpose is to test whether sampler schedules behave differently on a deliberately staged,
+early-layer image-shaped transport problem.
 
 ## Run Artifacts
 

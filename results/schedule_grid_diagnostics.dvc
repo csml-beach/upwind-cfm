@@ -1,0 +1,6 @@
+outs:
+- md5: a9a0e517a0039ad49661a0643eb61b62.dir
+  size: 731681
+  nfiles: 4
+  hash: md5
+  path: schedule_grid_diagnostics

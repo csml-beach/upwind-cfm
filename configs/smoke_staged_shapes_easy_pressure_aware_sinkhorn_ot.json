@@ -1,0 +1,56 @@
+{
+  "dataset": "staged_shapes_easy",
+  "dataset_kwargs": {
+    "n_train": 64,
+    "n_test": 32,
+    "data_seed": 7,
+    "class_conditional": false
+  },
+  "method": "standard_cfm",
+  "method_kwargs": {},
+  "pairing": "pressure_aware_sinkhorn_ot",
+  "pairing_kwargs": {
+    "pressure_beta": 0.5,
+    "pressure_t": "random",
+    "reference_pairing": "sinkhorn_ot",
+    "cost_feature": "downsampled_pixels",
+    "image_shape": [3, 32, 32],
+    "downsample_size": 8,
+    "sinkhorn_iterations": 10,
+    "sinkhorn_epsilon_scale": 0.2,
+    "sinkhorn_projection": "greedy"
+  },
+  "model": "unet2d",
+  "model_kwargs": {
+    "image_shape": [3, 32, 32],
+    "base_channels": 8,
+    "channel_mults": [1, 2],
+    "num_res_blocks": 1,
+    "time_dim": 32,
+    "attention_resolutions": []
+  },
+  "seed": 0,
+  "solver": "euler",
+  "train": {
+    "batch_size": 4,
+    "max_steps": 2,
+    "log_every": 1,
+    "checkpoint_every": 1,
+    "sample_every": 1,
+    "lr": 0.001,
+    "grad_clip": 1.0,
+    "amp": false
+  },
+  "eval": {
+    "n_eval": 8,
+    "nfe_values": [2, 5],
+    "sample_grid_n": 8,
+    "sample_grid_nrow": 4,
+    "sample_grid_steps": 2,
+    "compute_fid_kid": false,
+    "eval_seed": 1234,
+    "plot_seed": 1234
+  },
+  "out_dir": "runs/smoke",
+  "run_name": "smoke_staged_shapes_easy_pressure_aware_sinkhorn_ot"
+}

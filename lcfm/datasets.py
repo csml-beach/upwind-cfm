@@ -392,6 +392,362 @@ class CIFAR10Problem:
         return self.train[idx].to(device)
 
 
+class StagedShapesEasyProblem:
+    name = "staged_shapes_easy"
+    image_shape = (3, 32, 32)
+    dim = 3 * 32 * 32
+
+    DEFAULT_MODES = [
+        {"shape": "circle", "color": [0.95, -0.55, -0.55], "center": [14.0, 16.0], "scale": 4.5},
+        {"shape": "square", "color": [-0.55, -0.20, 0.95], "center": [22.0, 12.0], "scale": 5.5},
+        {"shape": "triangle", "color": [-0.40, 0.90, -0.45], "center": [25.0, 25.0], "scale": 6.5},
+        {"shape": "ring", "color": [0.95, 0.80, -0.45], "center": [7.0, 25.0], "scale": 5.8},
+        {"shape": "cross", "color": [0.55, -0.45, 0.95], "center": [5.0, 7.0], "scale": 7.2},
+    ]
+
+    def __init__(self, config):
+        self.n_train = int(config.get("n_train", 5000))
+        self.n_test = int(config.get("n_test", 2000))
+        self.data_seed = int(config.get("data_seed", 0))
+        self.class_conditional = bool(config.get("class_conditional", False))
+        self.background = float(config.get("background", -0.90))
+        self.background_noise = float(config.get("background_noise", 0.025))
+        self.center_jitter = float(config.get("center_jitter", 1.25))
+        self.scale_jitter = float(config.get("scale_jitter", 0.35))
+        self.color_jitter = float(config.get("color_jitter", 0.035))
+        self.source_noise = float(config.get("source_noise", 0.045))
+        self.source_blob_amplitude = float(config.get("source_blob_amplitude", 0.35))
+        self.source_blob_sigma = float(config.get("source_blob_sigma", 6.0))
+        self.mode_specs = config.get("modes", self.DEFAULT_MODES)
+        self.n_modes = len(self.mode_specs)
+        self.train, self.train_labels = self._make_split(self.n_train, self.data_seed)
+        self.test, self.test_labels = self._make_split(self.n_test, self.data_seed + 10_000)
+
+    def _grid(self):
+        _, height, width = self.image_shape
+        ys = torch.arange(height, dtype=torch.float32) + 0.5
+        xs = torch.arange(width, dtype=torch.float32) + 0.5
+        return torch.meshgrid(ys, xs, indexing="ij")
+
+    def _source_template(self):
+        yy, xx = self._grid()
+        cy = self.image_shape[1] / 2.0
+        cx = self.image_shape[2] / 2.0
+        dist_sq = (yy - cy).pow(2) + (xx - cx).pow(2)
+        blob = torch.exp(-0.5 * dist_sq / (self.source_blob_sigma**2))
+        image = self.background + self.source_blob_amplitude * blob
+        return image.expand(self.image_shape[0], *image.shape).clone()
+
+    def _sample_source(self, n_samples, device):
+        template = self._source_template().to(device)
+        noise = self.source_noise * torch.randn(n_samples, *self.image_shape, device=device)
+        return (template.unsqueeze(0) + noise).clamp(-1.0, 1.0).reshape(n_samples, self.dim)
+
+    @staticmethod
+    def _triangle_mask(xx, yy, cx, cy, scale):
+        x1, y1 = cx, cy - scale
+        x2, y2 = cx - 0.95 * scale, cy + 0.85 * scale
+        x3, y3 = cx + 0.95 * scale, cy + 0.85 * scale
+        denom = (y2 - y3) * (x1 - x3) + (x3 - x2) * (y1 - y3)
+        a = ((y2 - y3) * (xx - x3) + (x3 - x2) * (yy - y3)) / denom
+        b = ((y3 - y1) * (xx - x3) + (x1 - x3) * (yy - y3)) / denom
+        c = 1.0 - a - b
+        return (a >= 0.0) & (b >= 0.0) & (c >= 0.0)
+
+    def _shape_mask(self, shape, center, scale):
+        yy, xx = self._grid()
+        cx, cy = float(center[0]), float(center[1])
+        dx = xx - cx
+        dy = yy - cy
+        radius = torch.sqrt(dx.pow(2) + dy.pow(2))
+        if shape == "circle":
+            return radius <= scale
+        if shape == "square":
+            return (dx.abs() <= scale) & (dy.abs() <= scale)
+        if shape == "triangle":
+            return self._triangle_mask(xx, yy, cx, cy, scale)
+        if shape == "ring":
+            thickness = max(1.5, 0.28 * scale)
+            return (radius >= scale - thickness) & (radius <= scale + thickness)
+        if shape == "cross":
+            half_width = max(1.5, 0.25 * scale)
+            return ((dx.abs() <= half_width) & (dy.abs() <= scale)) | ((dy.abs() <= half_width) & (dx.abs() <= scale))
+        raise ValueError(f"Unknown staged shape: {shape}")
+
+    def _render_one(self, mode_idx, generator):
+        spec = self.mode_specs[int(mode_idx)]
+        center = torch.tensor(spec["center"], dtype=torch.float32)
+        center = center + (2.0 * torch.rand(2, generator=generator) - 1.0) * self.center_jitter
+        scale = float(spec["scale"]) + float((2.0 * torch.rand((), generator=generator) - 1.0) * self.scale_jitter)
+        color = torch.tensor(spec["color"], dtype=torch.float32)
+        color = (color + self.color_jitter * torch.randn(3, generator=generator)).clamp(-1.0, 1.0)
+        image = torch.full(self.image_shape, self.background, dtype=torch.float32)
+        if self.background_noise > 0.0:
+            image = image + self.background_noise * torch.randn(*self.image_shape, generator=generator)
+        mask = self._shape_mask(spec["shape"], center, scale)
+        image[:, mask] = color[:, None]
+        return image.clamp(-1.0, 1.0)
+
+    def _make_split(self, n_samples, seed):
+        generator = torch.Generator().manual_seed(seed)
+        labels = torch.arange(n_samples, dtype=torch.long) % self.n_modes
+        perm = torch.randperm(n_samples, generator=generator)
+        labels = labels[perm]
+        images = torch.stack([self._render_one(label, generator) for label in labels.tolist()])
+        return images.reshape(n_samples, self.dim).contiguous(), labels
+
+    def sample_train_batch(self, batch_size, device):
+        idx = torch.randint(self.train.shape[0], (batch_size,))
+        x1 = self.train[idx].to(device)
+        x0 = self._sample_source(batch_size, device)
+        if self.class_conditional:
+            return x0, x1, self.train_labels[idx].to(device)
+        return x0, x1
+
+    def eval_initial(self, n_eval, device):
+        return self._sample_source(n_eval, device)
+
+    def eval_labels(self, n_eval, device):
+        labels = torch.arange(n_eval, dtype=torch.long, device=device)
+        return labels % self.n_modes
+
+    def _select_by_labels(self, data, data_labels, labels, device):
+        labels = labels.detach().cpu().long()
+        indices = []
+        counters = {}
+        for label in labels.tolist():
+            matches = torch.nonzero(data_labels == label, as_tuple=False).flatten()
+            position = counters.get(label, 0) % matches.numel()
+            counters[label] = position + 1
+            indices.append(matches[position])
+        return data[torch.stack(indices)].to(device)
+
+    def target_eval(self, n_eval, device, labels=None):
+        if labels is not None:
+            return self._select_by_labels(self.test, self.test_labels, labels, device)
+        if n_eval <= self.test.shape[0]:
+            return self.test[:n_eval].to(device)
+        idx = torch.randint(self.test.shape[0], (n_eval,))
+        return self.test[idx].to(device)
+
+    def metric_reference(self, n_eval, device, labels=None):
+        if labels is not None:
+            return self._select_by_labels(self.train, self.train_labels, labels, device)
+        if n_eval <= self.train.shape[0]:
+            return self.train[:n_eval].to(device)
+        idx = torch.randint(self.train.shape[0], (n_eval,))
+        return self.train[idx].to(device)
+
+
+class CheckerboardRefinementProblem:
+    name = "checkerboard_refinement"
+    dim = 2
+
+    def __init__(self, config):
+        self.n_train = int(config.get("n_train", 5000))
+        self.n_test = int(config.get("n_test", 2000))
+        self.n_coarse_per_axis = int(config.get("n_coarse_per_axis", 2))
+        self.n_fine_per_coarse = int(config.get("n_fine_per_coarse", 4))
+        self.extent = float(config.get("extent", 4.0))
+        self.source_std = float(config.get("source_std", 0.18))
+        self.target_margin = float(config.get("target_margin", 0.10))
+        self.paired_modes = bool(config.get("paired_modes", True))
+        self.coarse_centers = self._make_coarse_centers()
+        self.n_modes = self.coarse_centers.shape[0]
+        self.train, self.train_labels = self._sample_target(self.n_train)
+        self.test, self.test_labels = self._sample_target(self.n_test)
+
+    def _make_coarse_centers(self):
+        coords = torch.linspace(
+            -self.extent + self.extent / self.n_coarse_per_axis,
+            self.extent - self.extent / self.n_coarse_per_axis,
+            self.n_coarse_per_axis,
+        )
+        yy, xx = torch.meshgrid(coords, coords, indexing="ij")
+        return torch.stack([xx.flatten(), yy.flatten()], dim=1)
+
+    def _sample_labels(self, n_samples):
+        return torch.randint(self.n_modes, (n_samples,), dtype=torch.long)
+
+    def _coarse_cell_size(self):
+        return 2.0 * self.extent / self.n_coarse_per_axis
+
+    def _sample_source_for_labels(self, labels, device):
+        centers = self.coarse_centers[labels.cpu()].to(device)
+        return centers + self.source_std * torch.randn(labels.numel(), self.dim, device=device)
+
+    def _sample_target_for_labels(self, labels, device):
+        labels_cpu = labels.cpu()
+        centers = self.coarse_centers[labels_cpu].to(device)
+        coarse_size = self._coarse_cell_size()
+        fine_size = coarse_size / self.n_fine_per_coarse
+
+        candidates = []
+        for iy in range(self.n_fine_per_coarse):
+            for ix in range(self.n_fine_per_coarse):
+                if (ix + iy) % 2 == 0:
+                    candidates.append((ix, iy))
+        choice = torch.randint(len(candidates), (labels.numel(),), device=device)
+        offsets = torch.tensor(candidates, dtype=torch.float32, device=device)[choice]
+        lower = -0.5 * coarse_size + offsets * fine_size + self.target_margin * fine_size
+        upper = -0.5 * coarse_size + (offsets + 1.0) * fine_size - self.target_margin * fine_size
+        local = lower + torch.rand(labels.numel(), self.dim, device=device) * (upper - lower)
+        return centers + local
+
+    def _sample_target(self, n_samples):
+        labels = self._sample_labels(n_samples)
+        return self._sample_target_for_labels(labels, torch.device("cpu")), labels
+
+    def sample_train_batch(self, batch_size, device):
+        labels = self._sample_labels(batch_size)
+        if self.paired_modes:
+            return self._sample_source_for_labels(labels, device), self._sample_target_for_labels(labels, device)
+        target_labels = self._sample_labels(batch_size)
+        return self._sample_source_for_labels(labels, device), self._sample_target_for_labels(target_labels, device)
+
+    def eval_initial(self, n_eval, device):
+        labels = torch.arange(n_eval, dtype=torch.long) % self.n_modes
+        return self._sample_source_for_labels(labels, device)
+
+    def target_eval(self, n_eval, device):
+        if n_eval <= self.test.shape[0]:
+            return self.test[:n_eval].to(device)
+        labels = self._sample_labels(n_eval)
+        return self._sample_target_for_labels(labels, device)
+
+
+class CheckerboardRefinementImageProblem:
+    name = "checkerboard_refinement_image"
+    image_shape = (3, 32, 32)
+    dim = 3 * 32 * 32
+
+    DEFAULT_PHASES = [
+        [0, 0],
+        [1, 0],
+        [0, 1],
+        [1, 1],
+    ]
+
+    def __init__(self, config):
+        self.n_train = int(config.get("n_train", 5000))
+        self.n_test = int(config.get("n_test", 2000))
+        self.data_seed = int(config.get("data_seed", 0))
+        self.class_conditional = bool(config.get("class_conditional", False))
+        self.coarse_cells = int(config.get("coarse_cells", 4))
+        self.fine_cells = int(config.get("fine_cells", 8))
+        self.coarse_contrast = float(config.get("coarse_contrast", 0.48))
+        self.fine_contrast = float(config.get("fine_contrast", 0.42))
+        self.source_noise = float(config.get("source_noise", 0.025))
+        self.target_noise = float(config.get("target_noise", 0.015))
+        self.paired_modes = bool(config.get("paired_modes", True))
+        self.phase_specs = config.get("phases", self.DEFAULT_PHASES)
+        self.n_modes = len(self.phase_specs)
+        self.train, self.train_labels = self._make_split(self.n_train, self.data_seed, target=True)
+        self.test, self.test_labels = self._make_split(self.n_test, self.data_seed + 10_000, target=True)
+
+    def _grid(self):
+        _, height, width = self.image_shape
+        ys = torch.arange(height, dtype=torch.float32)
+        xs = torch.arange(width, dtype=torch.float32)
+        return torch.meshgrid(ys, xs, indexing="ij")
+
+    def _checker_sign(self, cells, phase):
+        _, height, width = self.image_shape
+        yy, xx = self._grid()
+        cell_h = height / float(cells)
+        cell_w = width / float(cells)
+        px, py = int(phase[0]), int(phase[1])
+        ix = torch.floor(xx / cell_w).long() + px
+        iy = torch.floor(yy / cell_h).long() + py
+        return torch.where((ix + iy) % 2 == 0, 1.0, -1.0)
+
+    def _render_source_one(self, mode_idx, generator):
+        phase = self.phase_specs[int(mode_idx)]
+        coarse = self._checker_sign(self.coarse_cells, phase)
+        scalar = self.coarse_contrast * coarse
+        image = scalar.expand(self.image_shape[0], *scalar.shape).clone()
+        if self.source_noise > 0.0:
+            image = image + self.source_noise * torch.randn(*self.image_shape, generator=generator)
+        return image.clamp(-1.0, 1.0)
+
+    def _render_target_one(self, mode_idx, generator):
+        phase = self.phase_specs[int(mode_idx)]
+        coarse = self._checker_sign(self.coarse_cells, phase)
+        fine = self._checker_sign(self.fine_cells, phase)
+        scalar = self.coarse_contrast * coarse + self.fine_contrast * fine
+        image = scalar.expand(self.image_shape[0], *scalar.shape).clone()
+        if self.target_noise > 0.0:
+            image = image + self.target_noise * torch.randn(*self.image_shape, generator=generator)
+        return image.clamp(-1.0, 1.0)
+
+    def _make_split(self, n_samples, seed, target):
+        generator = torch.Generator().manual_seed(seed)
+        labels = torch.arange(n_samples, dtype=torch.long) % self.n_modes
+        perm = torch.randperm(n_samples, generator=generator)
+        labels = labels[perm]
+        render = self._render_target_one if target else self._render_source_one
+        images = torch.stack([render(label, generator) for label in labels.tolist()])
+        return images.reshape(n_samples, self.dim).contiguous(), labels
+
+    def sample_train_batch(self, batch_size, device):
+        generator = torch.Generator().manual_seed(torch.randint(2**31 - 1, (1,)).item())
+        if self.paired_modes:
+            labels = torch.randint(self.n_modes, (batch_size,), device="cpu")
+            x0 = torch.stack([self._render_source_one(label, generator) for label in labels.tolist()])
+            x1 = torch.stack([self._render_target_one(label, generator) for label in labels.tolist()])
+            x0 = x0.reshape(batch_size, self.dim).to(device)
+            x1 = x1.reshape(batch_size, self.dim).to(device)
+            if self.class_conditional:
+                return x0, x1, labels.to(device)
+            return x0, x1
+        x0_labels = torch.randint(self.n_modes, (batch_size,), device="cpu")
+        x1_labels = torch.randint(self.n_modes, (batch_size,), device="cpu")
+        x0 = torch.stack([self._render_source_one(label, generator) for label in x0_labels.tolist()])
+        x1 = torch.stack([self._render_target_one(label, generator) for label in x1_labels.tolist()])
+        x0 = x0.reshape(batch_size, self.dim).to(device)
+        x1 = x1.reshape(batch_size, self.dim).to(device)
+        if self.class_conditional:
+            return x0, x1, x1_labels.to(device)
+        return x0, x1
+
+    def eval_initial(self, n_eval, device):
+        labels = torch.arange(n_eval, dtype=torch.long) % self.n_modes
+        generator = torch.Generator().manual_seed(self.data_seed + 20_000)
+        images = torch.stack([self._render_source_one(label, generator) for label in labels.tolist()])
+        return images.reshape(n_eval, self.dim).to(device)
+
+    def eval_labels(self, n_eval, device):
+        labels = torch.arange(n_eval, dtype=torch.long, device=device)
+        return labels % self.n_modes
+
+    def _select_by_labels(self, data, data_labels, labels, device):
+        labels = labels.detach().cpu().long()
+        indices = []
+        counters = {}
+        for label in labels.tolist():
+            matches = torch.nonzero(data_labels == label, as_tuple=False).flatten()
+            position = counters.get(label, 0) % matches.numel()
+            counters[label] = position + 1
+            indices.append(matches[position])
+        return data[torch.stack(indices)].to(device)
+
+    def target_eval(self, n_eval, device, labels=None):
+        if labels is not None:
+            return self._select_by_labels(self.test, self.test_labels, labels, device)
+        if n_eval <= self.test.shape[0]:
+            return self.test[:n_eval].to(device)
+        idx = torch.randint(self.test.shape[0], (n_eval,))
+        return self.test[idx].to(device)
+
+    def metric_reference(self, n_eval, device, labels=None):
+        if labels is not None:
+            return self._select_by_labels(self.train, self.train_labels, labels, device)
+        if n_eval <= self.train.shape[0]:
+            return self.train[:n_eval].to(device)
+        idx = torch.randint(self.train.shape[0], (n_eval,))
+        return self.train[idx].to(device)
+
+
 def burgers_rhs(u, t, dx, nu):
     u_x = (np.roll(u, -1) - np.roll(u, 1)) / (2 * dx)
     u_xx = (np.roll(u, -1) - 2 * u + np.roll(u, 1)) / (dx**2)
@@ -446,4 +802,7 @@ register(DATASETS, "fan_modes")(FanModesProblem)
 register(DATASETS, "staged_modes")(StagedModesProblem)
 register(DATASETS, "gaussian_mixture_nd")(GaussianMixtureNDProblem)
 register(DATASETS, "cifar10")(CIFAR10Problem)
+register(DATASETS, "staged_shapes_easy")(StagedShapesEasyProblem)
+register(DATASETS, "checkerboard_refinement")(CheckerboardRefinementProblem)
+register(DATASETS, "checkerboard_refinement_image")(CheckerboardRefinementImageProblem)
 register(DATASETS, "burgers_autoregressive")(BurgersAutoregressiveProblem)

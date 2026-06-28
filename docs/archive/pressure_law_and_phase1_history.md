@@ -350,8 +350,8 @@ modes, upper-budget and pressure-band losses show a small three-seed improvement
 CFM under uniform Euler-5, while exact pressure matching is not best. This keeps pressure-aware
 training alive, but only as a fragile hypothesis. The next decision should come from a tuned
 upper/band grid repeated across staged, clumped, and 16D mixtures; no pressure-training objective
-should enter the main method registry before that. See `docs/pressure_training_status.md` for the
-current short status.
+should enter the main method registry before that. See
+`docs/archive/pressure_training_status.md` for the current short status.
 
 Follow-up update: the stronger sweep weakens the direct-training story. Upper/band pressure
 losses help some 2D endpoint metrics, but on the 16D mixture they greatly reduce integration

@@ -1,6 +1,17 @@
 # Phase 1 Results: A Priori Error-Controlled Sampling
 
-Implementation of the Phase-1 strategy in `docs/ideas.md`. Training is untouched everywhere:
+## Current Status
+
+This file is the detailed experiment record for the sampler-side direction. The active paper
+candidate extracted from it is **Self-Curvature Time Warping (SCTW)**. Later pressure-training
+and pressure-coupling notes in this file should be read as history/diagnostics, not as the current
+main method.
+
+For the current plan, see `docs/plan.md`. For novelty and nearby work, see
+`docs/literature.md`. For the active checklist, see `docs/todo.md`.
+
+Implementation of the Phase-1 strategy now archived in
+`docs/archive/pressure_law_and_phase1_history.md`. Training is untouched everywhere:
 all velocity models are standard CFM; everything below is post-hoc (a dispersion head trained
 on frozen models, and sampler schedules).
 
@@ -101,6 +112,40 @@ Findings:
 4. **Cooling (P3) confirmed in absolute terms**: minibatch-OT collapses integration error at
    fixed NFE (fan: 0.038 vs 0.540 uniform Euler-6) — the cold coupling is simply easier to
    integrate; warping then matters little (gain 1.03 on fan-OT).
+
+## Working Sampler Method: Self-Curvature Time Warping
+
+The current sampler-side method of record is **Self-Curvature Time Warping** (SCTW). It is
+training-free and oracle-free: a trained CFM velocity field is probed along its own rollout, and
+Euler steps are placed according to the model's self-reported material-derivative magnitude.
+
+Default settings for image-scale checks:
+
+- `profile_samples = 512`
+- `profile_fine_steps = 50`
+- `warp_power = 0.25`
+- `warp_floor = 1e-3`
+
+The profile is
+
+$$
+e(t_i) \approx \frac{\|v_\theta(x_{i+1}, t_{i+1}) - v_\theta(x_i, t_i)\|}{\Delta t},
+$$
+
+estimated on a fine uniform Euler probe. The sampler uses the density
+
+$$
+\rho(t) = (e(t) + 10^{-3})^{0.25}
+$$
+
+and places knots at equal cumulative mass of $\rho$. The exponent `0.25` is a tempered version of
+the raw Euler equal-error exponent `0.5`. The tempering matters on CIFAR-10: raw `0.5` improves
+moderate/high NFE but is too aggressive at NFE 5, while `0.25` largely removes that failure and
+keeps most of the gains.
+
+Do not call this pressure-aware in the method name. It is motivated by the pressure/material
+derivative narrative, but the deployed sampler does not compute oracle pressure, pressure
+gradients, or pressure budgets. It is a self-curvature/adaptive-time sampler.
 
 ## X1: the gain law
 
@@ -204,7 +249,7 @@ an upper budget but probably necessary if the method must prevent cold-flow coll
 
 ## X2e: pressure-in-training viability probe
 
-Canonical short status: `docs/pressure_training_status.md`.
+Canonical short status: `docs/archive/pressure_training_status.md`.
 
 The first training-side pressure test is deliberately oracle-assisted and should not be treated as
 a deployable method yet. Script:

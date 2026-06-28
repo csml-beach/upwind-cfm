@@ -237,6 +237,6 @@ This demonstrates the central tension: uniform residual suppression can improve 
 
 ## Asymmetric Follow-Up
 
-The centered five-mode setup is intentionally simple, but its radial symmetry can make distinct regularizers look too similar. The next diagnostic benchmark is `fan_modes`, documented in `docs/benchmark_fan_modes.md`.
+The centered five-mode setup is intentionally simple, but its radial symmetry can make distinct regularizers look too similar. The next diagnostic benchmark is `fan_modes`, documented in `docs/archive/benchmark_fan_modes.md`.
 
 `fan_modes` moves the source prior to the left of a right-side five-mode fan. This creates a coherent transport direction before branching, making it a sharper test for directional or CFL-motivated regularization than the centered case.

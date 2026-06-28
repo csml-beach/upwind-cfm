@@ -1,0 +1,6 @@
+outs:
+- md5: ef22023f896fa97a9cfc4f3f5831293b.dir
+  size: 3267
+  nfiles: 2
+  hash: md5
+  path: gm16_strong_sinkhorn_3seed

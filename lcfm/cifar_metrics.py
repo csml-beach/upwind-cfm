@@ -7,6 +7,7 @@ import torch.nn.functional as F
 
 from .experiment import _condition_model
 from .models import build_model
+from .schedules import euler_on_grid
 from .solvers import solve
 from .utils import set_seed, write_json
 
@@ -202,7 +203,7 @@ def fid_kid_metrics(fake_uint8, real_uint8, batch_size, device, kid_subset_size=
 
 
 @torch.no_grad()
-def generate_cifar_samples(model, problem, config, n_samples, nfe, batch_size, seed, device):
+def generate_cifar_samples(model, problem, config, n_samples, nfe, batch_size, seed, device, time_grid=None):
     set_seed(seed)
     chunks = []
     label_chunks = []
@@ -218,7 +219,12 @@ def generate_cifar_samples(model, problem, config, n_samples, nfe, batch_size, s
         )
         x0 = problem.eval_initial(size, device)
         eval_model = _condition_model(model, labels)
-        traj = solve(solver_name, eval_model, x0, {"steps": int(nfe)})
+        if time_grid is None:
+            traj = solve(solver_name, eval_model, x0, {"steps": int(nfe)})
+        else:
+            if solver_name != "euler":
+                raise ValueError("time_grid evaluation is currently defined for Euler sampling only.")
+            traj = euler_on_grid(eval_model, x0, time_grid)
         chunks.append(traj[-1].detach().cpu())
         if labels is not None:
             label_chunks.append(labels.detach().cpu())

@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import torch
 
-from lcfm.datasets import CIFAR10Problem
+from lcfm.datasets import CIFAR10Problem, StagedShapesEasyProblem
 from lcfm.cifar_metrics import build_cifar_resnet18, flat_to_uint8_images, make_eval_labels
 from lcfm.models import build_model
 from lcfm.pairing import (
@@ -132,7 +132,23 @@ def main():
     classifier = build_cifar_resnet18()
     logits = classifier(uint8_images.float() / 255.0)
     assert_true(logits.shape == (4, 10), "CIFAR classifier should return 10 logits.")
-    print("cifar10 benchmark checks passed")
+
+    staged_shapes = StagedShapesEasyProblem({"n_train": 25, "n_test": 10, "data_seed": 13})
+    x0_shapes, x1_shapes = staged_shapes.sample_train_batch(5, torch.device("cpu"))
+    assert_true(staged_shapes.dim == 3072, "Staged shapes dim should be 3072.")
+    assert_true(staged_shapes.image_shape == (3, 32, 32), "Staged shapes should be 3x32x32.")
+    assert_true(staged_shapes.n_modes == 5, "Staged shapes easy should have 5 target modes.")
+    assert_true(x0_shapes.shape == x1_shapes.shape == (5, 3072), "Staged shapes batches should be flat image vectors.")
+    assert_true(float(x0_shapes.min()) >= -1.0 and float(x0_shapes.max()) <= 1.0, "Staged shapes sources should be in [-1, 1].")
+    assert_true(float(x1_shapes.min()) >= -1.0 and float(x1_shapes.max()) <= 1.0, "Staged shapes targets should be in [-1, 1].")
+    staged_shapes_again = StagedShapesEasyProblem({"n_train": 25, "n_test": 10, "data_seed": 13})
+    assert_true(
+        torch.allclose(staged_shapes.target_eval(10, torch.device("cpu")), staged_shapes_again.target_eval(10, torch.device("cpu"))),
+        "Staged shapes eval split should be deterministic.",
+    )
+    _, x1_shapes_paired = sinkhorn_ot_pair(x0_shapes, x1_shapes, sinkhorn_cfg)
+    assert_true(x1_shapes_paired.shape == x1_shapes.shape, "Staged shapes Sinkhorn pairing should preserve full image vectors.")
+    print("image benchmark checks passed")
 
 
 if __name__ == "__main__":

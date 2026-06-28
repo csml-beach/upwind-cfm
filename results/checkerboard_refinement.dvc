@@ -1,0 +1,6 @@
+outs:
+- md5: 383021cf8b1a729c3d0292ea1717c25d.dir
+  size: 2319314
+  nfiles: 17
+  hash: md5
+  path: checkerboard_refinement

@@ -1,0 +1,38 @@
+{
+  "dataset": "checkerboard_refinement",
+  "dataset_kwargs": {
+    "n_train": 10000,
+    "n_test": 4000,
+    "n_coarse_per_axis": 2,
+    "n_fine_per_coarse": 4,
+    "extent": 4.0,
+    "source_std": 0.18,
+    "target_margin": 0.10,
+    "paired_modes": true
+  },
+  "method": "standard_cfm",
+  "method_kwargs": {},
+  "model": "mlp",
+  "model_kwargs": {
+    "hidden": 256,
+    "depth": 4
+  },
+  "seed": 0,
+  "device": "cpu",
+  "solver": "euler",
+  "train": {
+    "batch_size": 512,
+    "max_steps": 5000,
+    "log_every": 250,
+    "lr": 0.001,
+    "grad_clip": 1.0,
+    "save_checkpoint": false
+  },
+  "eval": {
+    "n_eval": 1000,
+    "nfe_values": [5, 10, 20, 50],
+    "eval_seed": 1234
+  },
+  "out_dir": "results/checkerboard_refinement/local/runs",
+  "run_name": "checkerboard_refinement_standard_seed0"
+}

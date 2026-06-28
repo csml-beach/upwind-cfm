@@ -7,6 +7,33 @@ error; kappa is the predicted step-efficiency gain of warping over uniform.
 import torch
 
 
+def power_time_grid(steps, rho=2.0, kind="early"):
+    """Deterministic hand-designed non-uniform grids on [0, 1].
+
+    kind='early' puts more points near t=0 for rho>1; kind='late' puts more
+    points near t=1; kind='symmetric' puts more points near both endpoints.
+    """
+    if steps <= 0:
+        raise ValueError("steps must be positive.")
+    rho = float(rho)
+    if rho <= 0:
+        raise ValueError("rho must be positive.")
+    u = torch.linspace(0.0, 1.0, int(steps) + 1, dtype=torch.float64)
+    if kind == "early":
+        grid = u.pow(rho)
+    elif kind == "late":
+        grid = 1.0 - (1.0 - u).pow(rho)
+    elif kind == "symmetric":
+        left = 0.5 * (2.0 * u).pow(rho)
+        right = 1.0 - 0.5 * (2.0 * (1.0 - u)).pow(rho)
+        grid = torch.where(u <= 0.5, left, right)
+    else:
+        raise ValueError("kind must be one of: early, late, symmetric.")
+    grid[0] = 0.0
+    grid[-1] = 1.0
+    return [float(x) for x in grid.tolist()]
+
+
 @torch.no_grad()
 def euler_on_grid(velocity, x0, t_grid):
     """Explicit Euler on an arbitrary (possibly non-uniform) time grid."""

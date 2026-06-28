@@ -1,9 +1,13 @@
 # CIFAR-10 Low-NFE Benchmark
 
-This benchmark is the first image-scale test for pressure-aware coupling. The
-scientific question is whether coupling design improves low-NFE class-conditional
-image quality against standard CFM, minibatch OT, and a light Iso-FD cooling
-baseline.
+This benchmark is the image-scale test bed for low-NFE flow-matching sampling.
+The current active question is whether **Self-Curvature Time Warping (SCTW)**
+improves low-NFE sampling from a trained CFM checkpoint against uniform Euler
+and strong hand schedules.
+
+Earlier CIFAR experiments also tested pressure-aware coupling. Those results are
+kept below because they are informative, but they are no longer the main paper
+claim.
 
 ## Scope
 
@@ -18,17 +22,17 @@ baseline.
   `model.pt`, optional `model_ema.pt`, `checkpoint_latest.pt`, and
   `samples/*.png`.
 
-## First Suite
+## Historical First Suite
 
-The intended first GPU benchmark compares:
+The first GPU benchmark compared:
 
 - `configs/cifar10_standard.json`
 - `configs/cifar10_minibatch_ot.json`
 - `configs/cifar10_pressure_aware_ot.json`
 - `configs/cifar10_iso_fd_w01.json`
 
-Use batch size 64 for all methods. This is deliberately small enough that exact
-Hungarian assignment can run every step for the OT variants.
+Use batch size 64 for all methods. This was deliberately small enough that exact
+Hungarian assignment could run every step for the OT variants.
 
 ## Pairing Caveat
 
@@ -198,6 +202,10 @@ Result location:
 - `results/cifar10_uncond_coupling_large_100k/`
 - `results/cifar10_uncond_coupling_large_100k/ema_5000_eval_allseeds_aggregate.csv`
 - `results/cifar10_uncond_coupling_large_100k/ema_5000_eval_allseeds_raw.csv`
+- `results/cifar10_uncond_coupling_large_100k/figures/metrics_fid_kl.png`
+- `results/cifar10_uncond_coupling_large_100k/figures/samples_nfe10_seed0.png`
+- `results/cifar10_uncond_coupling_large_100k/pairing_diagnostic_16x16_beta_summary.csv`
+- `results/cifar10_uncond_coupling_large_100k/figures/pairing_beta_sensitivity.png`
 
 This probe used the same 100k-step large-UNet/EMA recipe as the conditional
 runs, but with `class_conditional=false` and no UNet label embedding.
@@ -234,6 +242,65 @@ Interpretation:
 - This is currently the strongest image-scale positive signal for pressure-aware
   coupling. It should be framed as a modest but consistent low-NFE improvement
   in the harder, label-free CIFAR setting.
+- The sample-panel differences are subtle by eye; the paper-facing claim should
+  lean on FID/KID and class-balance diagnostics rather than visual inspection
+  alone.
+
+Coupling-mechanics diagnostic:
+
+After the three-seed result, we checked whether pressure-aware OT actually
+changes minibatch assignments relative to ordinary minibatch OT. For held-out
+CIFAR training batches, we recomputed 16x16 RGB minibatch OT and pressure-aware
+OT assignments with the same pressure cost used in training.
+
+| pressure beta | assignment rows changed |
+| ---: | ---: |
+| 0.2 | 0.024% |
+| 1.0 | 0.537% |
+| 5.0 | 2.100% |
+| 10.0 | 3.442% |
+
+This is a serious caveat. At the actual trained setting, `pressure_beta=0.2`,
+pressure-aware OT is nearly identical to minibatch OT as an assignment rule. The
+small FID gain may therefore be caused by very rare assignment changes,
+stochastic training differences, or another indirect effect, not by a strong
+pressure-driven recoupling of CIFAR minibatches. Before making a mechanism claim,
+we need a stricter control, such as retraining minibatch OT with matched random
+number consumption or training a higher-beta pressure-aware variant that actually
+changes assignments.
+
+## SCTW Sampler Evaluation
+
+The current sampler-side evaluation uses the unconditional Sinkhorn OT large
+UNet/EMA checkpoint and changes only the inference time grid. Training is
+unchanged.
+
+Result locations:
+
+- `results/cifar10_uncond_coupling_large_100k/runs/cifar10_uncond_sinkhorn_ot_large_16x16_seed0/eval_e1_warped_5000/`
+- `results/cifar10_uncond_coupling_large_100k/runs/cifar10_uncond_sinkhorn_ot_large_16x16_seed0/eval_e1_warped_p025_5000/`
+- `results/cifar10_uncond_coupling_large_100k/runs/cifar10_uncond_sinkhorn_ot_large_16x16_seed0/eval_power_baselines_5000/`
+- `results/cifar10_uncond_coupling_large_100k/runs/cifar10_uncond_sinkhorn_ot_large_16x16_seed0/time_mesh_sweep_512/`
+
+FID lower is better:
+
+| NFE | Uniform | SCTW p=0.25 | SCTW p=0.5 | Best hand power |
+| ---: | ---: | ---: | ---: | ---: |
+| 5 | 41.4147 | 41.7388 | 44.9989 | 47.8957 |
+| 10 | 28.9758 | 28.3254 | 28.7508 | 30.0170 |
+| 20 | 23.8106 | 22.9072 | 22.7874 | 23.3659 |
+| 50 | 20.9632 | 20.3763 | 20.2047 | 20.3376 |
+
+Interpretation:
+
+- SCTW improves over uniform at NFE 10/20/50.
+- The tempered `p=0.25` setting avoids the severe NFE-5 degradation seen with
+  `p=0.5`, but it does not beat uniform at NFE 5.
+- The tested hand power schedules are weaker than SCTW on CIFAR, which supports
+  the need for model-adaptive scheduling.
+- This result should be paired with staged-shapes, where a hand early schedule
+  is stronger, to make the honest claim: SCTW is adaptive and interpretable, not
+  universally dominant.
 
 ## Deferred Avenues
 

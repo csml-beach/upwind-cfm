@@ -192,6 +192,7 @@ def train_model(problem, config, device, out_dir=None):
     total_steps = int(train_cfg.get("max_steps", train_cfg.get("epochs", 1000)))
     batch_size = train_cfg.get("batch_size", 256)
     log_every = train_cfg.get("log_every", 100)
+    save_checkpoint = bool(train_cfg.get("save_checkpoint", True))
     checkpoint_every = int(train_cfg.get("checkpoint_every", 0))
     keep_checkpoints = bool(train_cfg.get("keep_checkpoints", False))
     stop_on_nonfinite = bool(train_cfg.get("stop_on_nonfinite", True))
@@ -201,7 +202,7 @@ def train_model(problem, config, device, out_dir=None):
     use_amp = bool(train_cfg.get("amp", False)) and device.type == "cuda"
     scaler = torch.cuda.amp.GradScaler(enabled=use_amp) if device.type == "cuda" else None
     ema = ModelEMA(model, train_cfg.get("ema_decay", 0.9999)) if train_cfg.get("ema", False) else None
-    checkpoint_path = Path(out_dir) / "checkpoint_latest.pt" if out_dir else None
+    checkpoint_path = Path(out_dir) / "checkpoint_latest.pt" if out_dir and save_checkpoint else None
     start_step = 0
     history = []
     if train_cfg.get("resume", False) and checkpoint_path and checkpoint_path.exists():
@@ -340,6 +341,28 @@ def eval_burgers_autoregressive(problem, model, config, device):
 
 
 @torch.no_grad()
+def eval_checkerboard_refinement(problem, model, config, device):
+    eval_cfg = config.get("eval", {})
+    n_eval = int(eval_cfg.get("n_eval", 1000))
+    nfe_values = eval_cfg.get("nfe_values", [5, 10, 20, 50])
+    eval_seed = int(eval_cfg.get("eval_seed", 1234))
+    set_seed(eval_seed)
+    x0 = problem.eval_initial(n_eval, device)
+    target = problem.target_eval(n_eval, device)
+    metrics = {"n_eval": n_eval}
+    for steps in nfe_values:
+        steps = int(steps)
+        traj = solve(config.get("solver", "euler"), model, x0, {"steps": steps})
+        prefix = f"nfe_{steps}"
+        metrics[f"{prefix}_wasserstein"] = wasserstein_match(traj[-1], target)
+        metrics[f"{prefix}_wasserstein2"] = wasserstein_match(traj[-1], target, p=2)
+        metrics[f"{prefix}_mean_path_length"] = mean_path_length(traj)
+        metrics[f"{prefix}_path_length_ratio"] = path_length_ratio(traj)
+        metrics[f"{prefix}_trajectory_acceleration"] = trajectory_acceleration(traj)
+    return metrics
+
+
+@torch.no_grad()
 def eval_cifar10(problem, model, config, device, out_dir=None):
     eval_cfg = config.get("eval", {})
     n_eval = int(eval_cfg.get("n_eval", 64))
@@ -383,7 +406,9 @@ def evaluate(problem, model, config, device, out_dir=None):
         return eval_five_modes(problem, model, config, device)
     if problem.name == "burgers_autoregressive":
         return eval_burgers_autoregressive(problem, model, config, device)
-    if problem.name == "cifar10":
+    if problem.name == "checkerboard_refinement":
+        return eval_checkerboard_refinement(problem, model, config, device)
+    if hasattr(problem, "image_shape"):
         return eval_cifar10(problem, model, config, device, out_dir=out_dir)
     raise ValueError(f"No evaluator for problem: {problem.name}")
 

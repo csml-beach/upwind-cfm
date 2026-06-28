@@ -2,3 +2,8 @@
 /five_modes_clumped015_multiseed
 /five_modes_clumped015_ot_comparison
 /cifar10_uncond_coupling_large_100k
+/schedule_grid_diagnostics
+/checkerboard_refinement
+/gm16_pressure_sinkhorn_sweep
+/gm16_strong_sinkhorn_10seed
+/gm16_strong_sinkhorn_3seed

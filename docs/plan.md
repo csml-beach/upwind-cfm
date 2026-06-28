@@ -1,452 +1,168 @@
-# Working Plan: Uncertainty-Aware Streamline Stabilization
+# Active Plan: Self-Curvature Time Warping for Flow Matching
 
-## Current Position
+## Current Thesis
 
-The previous finite-difference Lagrangian consistency loss should no longer be treated as the main novelty. It is best understood as a semi-Lagrangian / characteristic finite-difference approximation of the material derivative,
+The strongest current paper direction is no longer direct pressure-aware training or
+pressure-aware coupling. Those ideas produced useful diagnostics and some positive cases, but
+they are not robust enough yet to carry the paper.
+
+The active method candidate is:
+
+> **Self-Curvature Time Warping (SCTW):** a training-free, oracle-free timestep mesh for low-NFE
+> flow-matching sampling. It probes a trained velocity field along its own rollout, estimates
+> where the model has high material-derivative/self-curvature, and spends Euler steps there.
+
+Pressure theory remains important, but mainly as the derivational and diagnostic lens:
+
+- it explains why marginal CFM trajectories can curve in multimodal transport;
+- it explains why zero-acceleration regularizers can erase mode-commitment physics;
+- it motivates measuring pathwise acceleration/material derivative;
+- it does **not** currently give a robust training objective by itself.
+
+## Method In One Page
+
+Flow matching samples from the learned ODE
 
 $$
-\frac{Dv_\theta}{Dt}
+\frac{dx}{dt}=v_\theta(x,t).
+$$
+
+Along a generated trajectory, the velocity changes according to the material derivative
+
+$$
+\frac{D v_\theta}{Dt}
 =
-\partial_t v_\theta + (v_\theta \cdot \nabla_x)v_\theta,
+\partial_t v_\theta+(v_\theta\cdot\nabla_x)v_\theta.
 $$
 
-and is conceptually very close to Isokinetic Flow Matching's Jacobian-free material-derivative regularizer. It remains valuable as a baseline and implementation scaffold, but it is not enough by itself for a strong paper claim.
-
-The working research idea is now:
-
-> Flow matching should be stabilized where coarse ODE integration is numerically fragile, but acceleration should not be suppressed uniformly in regions where multimodal uncertainty makes acceleration necessary.
-
-## Full Derivation Narrative
-
-### 1. Start From The Learned Sampling ODE
-
-Flow matching learns a time-dependent velocity field
-
-$$
-v_\theta(x,t),
-$$
-
-and samples by solving the ODE
-
-$$
-\frac{dx(t)}{dt}
-=
-v_\theta(x(t),t).
-$$
-
-This is the Lagrangian viewpoint: instead of looking at the field at a fixed spatial coordinate, we follow a generated particle as it moves through the learned velocity field.
-
-The central quantity is not only the instantaneous velocity, but how that velocity changes along the trajectory:
-
-$$
-\frac{d}{dt}v_\theta(x(t),t).
-$$
-
-### 2. Apply The Chain Rule
-
-By the chain rule,
-
-$$
-\frac{d}{dt}v_\theta(x(t),t)
-=
-\partial_t v_\theta(x,t)
-+
-\left(\frac{dx(t)}{dt}\cdot\nabla_x\right)v_\theta(x,t).
-$$
-
-Since the particle itself follows
-
-$$
-\frac{dx(t)}{dt}=v_\theta(x(t),t),
-$$
-
-we obtain the material derivative:
-
-$$
-\frac{Dv_\theta}{Dt}(x,t)
-=
-\partial_t v_\theta(x,t)
-+
-(v_\theta(x,t)\cdot\nabla_x)v_\theta(x,t).
-$$
-
-We will call this the material residual:
-
-$$
-R_\theta(x,t)
-=
-\partial_t v_\theta(x,t)
-+
-(v_\theta(x,t)\cdot\nabla_x)v_\theta(x,t).
-$$
-
-Interpretation:
-
-- $R_\theta$ is the pathwise acceleration of the learned generative flow.
-- $R_\theta \approx 0$ means a particle experiences nearly constant velocity along the learned trajectory.
-- Large $R_\theta$ means the local trajectory bends or changes speed quickly.
-
-### 3. Connect The Residual To Low-NFE Solver Error
-
-For a short time step $\Delta t$, Taylor expansion of the true trajectory gives
+For a small Euler step,
 
 $$
 x(t+\Delta t)
 =
-x(t)
-+
-\Delta t\,v_\theta(x(t),t)
-+
-\frac{\Delta t^2}{2}R_\theta(x(t),t)
-+
-O(\Delta t^3).
+x(t)+\Delta t\,v_\theta(x(t),t)
++\frac{\Delta t^2}{2}\frac{D v_\theta}{Dt}(x(t),t)
++O(\Delta t^3).
 $$
 
-Explicit Euler keeps only the first two terms:
+Thus coarse Euler error is driven, to first order, by the magnitude of the material derivative.
+SCTW estimates this quantity without JVPs or an oracle by a fine probe rollout:
 
 $$
-x_{n+1}
-=
-x_n
-+
-\Delta t\,v_\theta(x_n,t_n).
+e(t_i)\approx
+\frac{\|v_\theta(x_{i+1},t_{i+1})-v_\theta(x_i,t_i)\|}{\Delta t}.
 $$
 
-Therefore the leading local truncation error contains
+It then builds a nonuniform time mesh using a tempered density
 
 $$
-\frac{\Delta t^2}{2}R_\theta(x,t).
+\rho(t)=(e(t)+\epsilon)^p.
 $$
 
-This gives the numerical motivation for material-residual regularization: if we want reliable low-NFE sampling, we should reduce the residual that dominates coarse-step integration error.
+Current image-scale defaults:
 
-The naive acceleration-regularized objective would be
+- `profile_samples = 512`
+- `profile_fine_steps = 50`
+- `warp_power = 0.25`
+- `warp_floor = 1e-3`
 
-$$
-\mathcal{L}_{acc}
-=
-\mathbb{E}_{x,t}
-\left[
-\|R_\theta(x,t)\|^2
-\right].
-$$
+The raw Euler equal-error exponent would be near `p = 0.5`; `p = 0.25` is a tempered version
+that is less brittle at very low NFE.
 
-This is the point where the old LC finite-difference loss and Iso-FM live: they approximately penalize this material residual using a finite-difference consistency term along the model trajectory.
+## What Is Actually Different
 
-### 4. Why Uniform Residual Suppression Is Too Strong
+SCTW is not novel because it uses nonuniform timesteps. That idea is common. The possible
+contribution is narrower:
 
-Uniformly forcing $R_\theta \approx 0$ is not obviously correct for generative flow matching.
+> A cheap, training-free, native-CFM schedule built from the model's own pathwise
+> material-derivative/self-curvature profile, with no learned solver, no dynamic programming,
+> no oracle pressure field, and no retraining.
 
-In multimodal transport, a single intermediate state $x_t$ can be compatible with several different target modes. The conditional target velocity
+Compared with Iso-FM-style finite-difference regularization, SCTW does not change the learned
+field. Iso-FM tries to make the field easier to integrate by reducing material acceleration
+during training; SCTW accepts the learned field and changes where the inference budget is spent.
 
-$$
-u = x_1 - x_0
-$$
+Compared with bespoke or learned solvers, SCTW keeps the update rule fixed as Euler and only
+changes the mesh. This is weaker but simpler, cheaper, and easier to isolate scientifically.
 
-may have high conditional variance near that state:
+Compared with hand schedules such as early/late/symmetric power grids, SCTW is data/model-adaptive.
+This distinction matters because staged-shapes prefers an aggressive early schedule, while CIFAR-10
+does not. A fixed hand schedule can win on one benchmark for the wrong reason; SCTW should win or
+remain competitive without choosing the schedule family by hand.
 
-$$
-\mathrm{Var}[u\mid x_t,t].
-$$
+## Current Evidence
 
-In that regime, acceleration may be statistically necessary: the marginal flow may need to bend or accelerate as uncertainty resolves and samples commit to modes. Penalizing all material acceleration equally can over-straighten the transport, damage mode coverage, or delay mode commitment.
+### CIFAR-10 Unconditional Sinkhorn Model
 
-So the improved question is not:
+EMA model, 5000 samples, FID lower is better:
 
-> Can we make $R_\theta$ small everywhere?
+| NFE | Uniform | SCTW p=0.25 | SCTW p=0.5 | Best hand power |
+| ---: | ---: | ---: | ---: | ---: |
+| 5 | 41.4147 | 41.7388 | 44.9989 | 47.8957 |
+| 10 | 28.9758 | 28.3254 | 28.7508 | 30.0170 |
+| 20 | 23.8106 | 22.9072 | 22.7874 | 23.3659 |
+| 50 | 20.9632 | 20.3763 | 20.2047 | 20.3376 |
 
-but:
+Interpretation: SCTW beats uniform at NFE 10/20/50 and beats the tested hand power schedules.
+The NFE 5 case is not solved: p=0.25 is close to uniform, and p=0.5 is too aggressive.
 
-> Can we reduce the part of $R_\theta$ that is numerically harmful for coarse integration, while avoiding strong penalties where acceleration is required by conditional ambiguity?
+### Staged-Shapes Easy
 
-## Proposed Stabilized Objective
+Feature W1 lower is better:
 
-We propose a weighted material-residual penalty:
+| NFE | Uniform | SCTW p=0.25 | SCTW p=0.5 | Best hand power |
+| ---: | ---: | ---: | ---: | ---: |
+| 5 | 1.5238 | 1.3754 | 1.0118 | 0.9187 |
+| 10 | 1.3524 | 1.0482 | 0.8757 | 0.8116 |
+| 20 | 1.0977 | 0.8952 | 0.7861 | 0.7433 |
+| 50 | 0.8892 | 0.7823 | 0.7286 | 0.7149 |
 
-$$
-\mathcal{L}_{stab}
-=
-\lambda
-\,
-\mathbb{E}_{x,t}
-\left[
-w_{\mathrm{solver}}(x,t)
-\,
-g_{\mathrm{unc}}(x,t)
-\,
-\|R_\theta(x,t)\|^2
-\right].
-$$
+Interpretation: SCTW beats uniform, but a simple early-concentrated hand schedule beats it.
+This is a warning. We should not claim schedule dominance. The better claim is adaptivity across
+problems and a principled diagnostic for when nonuniform stepping should help.
 
-Here:
+## Method Depth Needed Before A Paper Claim
 
-- $w_{\mathrm{solver}}$ emphasizes residuals that are likely to hurt low-NFE integration.
-- $g_{\mathrm{unc}}$ suppresses the penalty where conditional velocity uncertainty is high.
-- $\lambda$ is the global regularization strength.
+The current method is promising but still shallow. To make it paper-worthy, we need at least one
+of the following:
 
-This replaces the earlier shorthand
+1. **Self-tuned tempering.** Choose `warp_power` from the measured curvature profile instead of
+   fixing it. This directly addresses the CIFAR-vs-staged tradeoff.
+2. **Equidistribution derivation.** State the numerical-analysis principle clearly: the mesh is
+   approximately equalizing estimated local Euler error, possibly with a tempering factor to
+   control probe noise and error amplification.
+3. **Schedule diagnostics.** Show that the measured profile predicts when uniform Euler fails and
+   when hand early/late schedules are appropriate.
+4. **Harder baselines.** Compare against uniform Euler, tuned hand schedules, higher-order Heun,
+   and at least discuss learned/bespoke solvers and diffusion schedule optimization.
 
-$$
-\tau(x,t)\|R_\theta(x,t)\|^2
-$$
+Without one of these, SCTW risks being perceived as a reasonable heuristic rather than a paper
+method.
 
-with a more explicit decomposition:
+## Current Non-Claims
 
-$$
-\tau(x,t)
-=
-w_{\mathrm{solver}}(x,t)
-\,
-g_{\mathrm{unc}}(x,t).
-$$
+Do not claim:
 
-## Solver-Aware Weighting
+- that pressure-aware training is solved;
+- that pressure-aware coupling is the main image-scale contribution;
+- that SCTW dominates all hand schedules;
+- that adaptive timesteps for generative ODEs are new;
+- that the method is pressure-aware in implementation.
 
-### The Caveat
+Do claim, if the next evidence supports it:
 
-The earlier plan wrote
+- SCTW is a simple self-curvature schedule for native flow matching;
+- it improves over uniform Euler on several low-NFE settings;
+- it can be more robust than fixed hand schedules across problem geometries;
+- the material-derivative profile is an interpretable diagnostic for low-NFE difficulty.
 
-$$
-\tau_{\mathrm{CFL}}(x,t)
-\approx
-\frac{\Delta t_{\mathrm{infer}}}
-{1+\Delta t_{\mathrm{infer}}L_\theta(x,t)}.
-$$
+## Immediate Next Step
 
-This expression should not be described as a weight that simply "grows when the field is risky." It is closer to a bounded stabilization time scale. It grows with the intended inference step size $\Delta t_{\mathrm{infer}}$, but it shrinks when the local stiffness proxy $L_\theta$ is large.
+Build a **schedule-shape diagnostic**:
 
-That behavior can be reasonable for a SUPG-style stabilization parameter, where $\tau$ often behaves like a local time scale. But it is not the same thing as a risk-amplifying loss weight.
+- plot SCTW profile density and time knots for CIFAR and staged-shapes;
+- compare against best hand power grids;
+- report early/mid/late step allocation;
+- quantify profile concentration and use it to propose an automatic `warp_power`.
 
-We should separate two concepts:
-
-1. A **SUPG-style time scale** that normalizes residual stabilization.
-2. A **solver-risk weight** that increases when the local coarse-step error is expected to be large.
-
-### Local CFL Proxy
-
-Classical CFL reasoning compares a time step to the local spatial scale over which the solution changes. In a learned vector field, we do not have a physical grid spacing $h$, but we can estimate a local inverse length scale using the Jacobian.
-
-Let
-
-$$
-L_\theta(x,t)
-\approx
-\|\nabla_x v_\theta(x,t)\|
-$$
-
-or, more cheaply, a directional estimate along the flow:
-
-$$
-L_{\mathrm{dir}}(x,t)
-=
-\frac{
-\|(\nabla_x v_\theta(x,t))v_\theta(x,t)\|
-}{
-\|v_\theta(x,t)\|+\epsilon
-}.
-$$
-
-Then a dimensionless coarse-step risk proxy is
-
-$$
-C_\theta(x,t)
-=
-\Delta t_{\mathrm{infer}} L_{\mathrm{dir}}(x,t).
-$$
-
-This is analogous to a local CFL number: large $C_\theta$ means the inference step is large relative to the local scale on which the velocity field changes.
-
-### Option A: SUPG-Style Stabilization Time Scale
-
-If we want a SUPG-like parameter, a reasonable form is
-
-$$
-\tau_{\mathrm{SUPG}}(x,t)
-=
-\frac{\Delta t_{\mathrm{infer}}}
-{1+\Delta t_{\mathrm{infer}}L_{\mathrm{dir}}(x,t)}.
-$$
-
-This is a bounded time scale. It should be interpreted as a stabilization scale, not as a direct "penalize stiff regions more" weight.
-
-It may be useful if the regularizer is written in a normalized form such as
-
-$$
-\|\tau_{\mathrm{SUPG}} R_\theta\|^2,
-$$
-
-or if we derive a residual-based stabilization term that needs a local time-scale coefficient.
-
-### Option B: Solver-Risk Weight
-
-If our goal is to penalize residuals more where coarse inference is expected to fail, then the weight should increase with $C_\theta$.
-
-A bounded monotone choice is
-
-$$
-w_{\mathrm{solver}}(x,t)
-=
-\Delta t_{\mathrm{infer}}^2
-\,
-\frac{C_\theta(x,t)^2}
-{1+C_\theta(x,t)^2}.
-$$
-
-This says:
-
-- the penalty matters more when we intend to sample with a larger inference step,
-- the penalty grows as local stiffness becomes large relative to that step,
-- the weight saturates so very stiff outliers do not dominate training.
-
-This is currently the cleaner default for the paper narrative because it directly matches the low-NFE error story.
-
-We should compare both options experimentally:
-
-- **SUPG-scale residual:** $\|\tau_{\mathrm{SUPG}} R_\theta\|^2$
-- **CFL-risk residual:** $w_{\mathrm{solver}}\|R_\theta\|^2$
-
-If only one survives, the paper should use the surviving version and describe the other as an ablation.
-
-## Uncertainty-Aware Gate
-
-The uncertainty gate should reduce regularization where the conditional transport is ambiguous:
-
-$$
-g_{\mathrm{unc}}(x,t)
-=
-\frac{1}
-{1+\kappa \widehat{\mathrm{Var}}[u\mid x_t,t]}.
-$$
-
-Here $u=x_1-x_0$ is the flow-matching target velocity, and $\widehat{\mathrm{Var}}[u\mid x_t,t]$ is an estimate of local conditional velocity variance.
-
-Interpretation:
-
-- high variance means many plausible target directions,
-- high variance makes $g_{\mathrm{unc}}$ small,
-- the residual penalty becomes weaker,
-- the model is allowed to accelerate while resolving multimodal ambiguity.
-
-Low variance means the local transport direction is already resolved:
-
-- $g_{\mathrm{unc}}$ is near one,
-- residual regularization is strong,
-- acceleration is treated as likely numerical roughness rather than necessary mode commitment.
-
-### First Practical Gate
-
-The simplest first implementation is a time-only gate:
-
-$$
-g_{\mathrm{unc}}(t)=t^\beta.
-$$
-
-This assumes early time is more ambiguous and late time is more resolved. It is useful as a controlled ablation, but it is weak as a final scientific claim because it is hand-shaped.
-
-### Stronger Scientific Gate
-
-A stronger version should estimate local uncertainty from data:
-
-- nearest-neighbor velocity variance around $x_t$,
-- minibatch kernel-weighted velocity variance,
-- repeated candidate couplings,
-- ensemble or dropout disagreement,
-- learned auxiliary uncertainty head.
-
-The paper should prefer a measurable uncertainty proxy if it improves over the time-only gate.
-
-## Final Candidate Losses
-
-The core proposed family is:
-
-$$
-\mathcal{L}
-=
-\mathcal{L}_{FM}
-+
-\lambda
-\,
-\mathbb{E}_{x,t}
-\left[
-w_{\mathrm{solver}}(x,t)
-\,
-g_{\mathrm{unc}}(x,t)
-\,
-\frac{\|R_\theta(x,t)\|^2}{\|v_\theta(x,t)\|^2+\zeta}
-\right].
-$$
-
-The velocity normalization is optional but likely helpful. It prevents high-speed regions from dominating only because velocities are large. We should test both normalized and unnormalized variants.
-
-Minimum variants:
-
-1. **Standard CFM:** no residual regularization.
-2. **Uniform residual:** $\|R_\theta\|^2$.
-3. **LC finite difference / Iso-FM-style:** semi-Lagrangian finite-difference residual proxy.
-4. **Solver-risk residual:** $w_{\mathrm{solver}}\|R_\theta\|^2$.
-5. **Uncertainty-gated residual:** $g_{\mathrm{unc}}\|R_\theta\|^2$.
-6. **Full method:** $w_{\mathrm{solver}}g_{\mathrm{unc}}\|R_\theta\|^2$.
-
-## Paper Narrative
-
-The writeup should proceed in this order:
-
-1. Start from the learned flow-matching ODE.
-2. Follow a generated sample along its trajectory.
-3. Derive the material residual by the chain rule.
-4. Connect the residual to the leading low-NFE Euler truncation error.
-5. Explain why uniform residual suppression is too strong for multimodal generative transport.
-6. Introduce solver-aware weighting using a local CFL/stiffness proxy.
-7. Introduce uncertainty-aware gating using conditional velocity variance.
-8. Treat LC finite difference and Iso-FM as close acceleration-regularization baselines.
-
-The intended claim is:
-
-> Acceleration regularization in flow matching should be selective: strong where residuals cause numerical integration error, weak where acceleration reflects unresolved generative ambiguity.
-
-## Immediate Benchmark Needs
-
-The first benchmark should expose both sides of the idea:
-
-- solver fragility under coarse inference,
-- early-time or multimodal ambiguity where uniform acceleration suppression may over-constrain.
-
-Useful metrics:
-
-- low-NFE Wasserstein or task error,
-- fixed low-NFE comparison at the first pass,
-- trajectory acceleration / material residual,
-- path length ratio,
-- mode coverage or mode assignment accuracy on multimodal toy data,
-- sensitivity to regularization strength and uncertainty-gate strength.
-
-## Baselines
-
-Required initial baselines:
-
-- Standard CFM
-- LC finite difference as our semi-Lagrangian/Iso-FM-style variant
-- Iso-FM-faithful finite-difference loss if its weighting/normalization differs materially
-- JVP material-derivative penalty
-- SUPG-scale residual
-- CFL-risk residual without uncertainty gate
-- uncertainty-gated residual without solver-risk weighting
-- full proposed solver-risk plus uncertainty gate
-
-Later baselines:
-
-- OT-CFM
-- Rectified Flow / Reflow
-- Consistency Flow Matching
-- Temporal Pair Consistency
-- higher-order ODE solvers such as Heun, RK4, and adaptive solvers
-
-## Success Criteria
-
-This direction is worth developing only if it can show at least one of the following:
-
-- better few-step generation than strong acceleration-regularization baselines,
-- less over-smoothing or better mode coverage than uniform material-derivative suppression,
-- improved stability on autoregressive or PDE-like tasks,
-- a clear solver-aware explanation that predicts when the regularizer should help,
-- a meaningful ablation showing that solver weighting and uncertainty gating contribute differently.
+This is the shortest path to making the method less ad hoc.
