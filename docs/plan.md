@@ -92,6 +92,22 @@ remain competitive without choosing the schedule family by hand.
 
 ## Current Evidence
 
+### CIFAR-10 Conditional Minibatch-OT Model
+
+EMA model, 5000 samples, class-balanced labels, FID lower is better:
+
+| NFE | Uniform | SCTW p=0.25 | SCTW p=0.5 | Best hand power |
+| ---: | ---: | ---: | ---: | ---: |
+| 5 | 33.8547 | 33.6035 | 35.0750 | 37.4262 |
+| 10 | 26.1458 | 25.1969 | 24.9058 | 25.5277 |
+| 20 | 22.7155 | 21.5815 | 21.1597 | 21.3782 |
+| 50 | 20.6087 | 20.0005 | 19.7164 | 19.7513 |
+
+Interpretation: SCTW improves FID over uniform at every tested NFE on this conditional CIFAR
+checkpoint. The tempered `p=0.25` variant is best at NFE 5, while the more aggressive `p=0.5`
+variant is best at NFE 10/20/50. Conditional classifier accuracy is essentially unchanged, so the
+gain appears to come from better low-NFE integration rather than label-fidelity drift.
+
 ### CIFAR-10 Unconditional Sinkhorn Model
 
 EMA model, 5000 samples, FID lower is better:
@@ -120,6 +136,25 @@ Feature W1 lower is better:
 Interpretation: SCTW beats uniform, but a simple early-concentrated hand schedule beats it.
 This is a warning. We should not claim schedule dominance. The better claim is adaptivity across
 problems and a principled diagnostic for when nonuniform stepping should help.
+
+### Low-Dimensional Complementary Checks
+
+Fresh one-seed checks on `spiral`, `five_modes`, and `fan_modes` support the same direction but
+with problem-dependent strength. SCTW is strongest on `five_modes` and `fan_modes`, especially at
+low NFE, while `spiral` is mixed and sometimes favors an early hand schedule. These are useful
+visual/mechanism cases, not final statistical evidence.
+
+### Evidence Summary
+
+The revisited experiments now support a positive but careful thesis:
+
+- SCTW is consistently competitive with uniform Euler and often improves it.
+- The strongest current positives are conditional CIFAR, unconditional CIFAR at moderate NFE,
+  staged-shapes, `five_modes`, and `fan_modes`.
+- Hand schedules remain serious competitors, especially on deliberately early-stiff staged
+  geometries.
+- The method should be framed as a model-adaptive schedule with interpretable diagnostics, not as
+  a universal dominator of tuned schedules.
 
 ## Method Depth Needed Before A Paper Claim
 

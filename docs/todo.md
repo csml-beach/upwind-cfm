@@ -2,7 +2,7 @@
 
 ## Priority 1: Make SCTW Less Ad Hoc
 
-- Add schedule-shape diagnostics for CIFAR and staged-shapes:
+- Finish schedule-shape diagnostics for CIFAR and staged-shapes:
   - plot self-curvature profile `e(t)`;
   - plot SCTW knots for `warp_power` values;
   - plot best hand power knots;
@@ -31,13 +31,19 @@
 
 ## Priority 3: Paper-Facing Experiments
 
-- Re-run SCTW/hand/uniform comparisons with cleaned scripts and fixed evaluation seeds.
+- Re-run SCTW/hand/uniform comparisons with cleaned scripts and fixed evaluation seeds where needed.
 - Produce side-by-side plots for:
   - CIFAR samples at low NFE;
   - staged-shapes samples/trajectories;
   - profile/time-grid diagnostics.
-- Decide whether the main quantitative image claim uses:
-  - unconditional CIFAR only;
+- Current positive/competitive evidence to preserve:
+  - conditional CIFAR: SCTW improves FID over uniform at NFE 5/10/20/50;
+  - unconditional CIFAR: SCTW improves FID over uniform at NFE 10/20/50;
+  - staged-shapes: SCTW strongly beats uniform but remains behind a tuned early hand schedule;
+  - `five_modes` and `fan_modes`: SCTW gives clear low-NFE gains over uniform;
+  - `spiral`: mixed, useful as a caveat rather than a headline.
+- Decide whether the main quantitative claim uses:
+  - both conditional and unconditional CIFAR;
   - staged-shapes plus CIFAR;
   - or a third benchmark to avoid overfitting to two cases.
 
@@ -69,11 +75,12 @@
 
 ## Decision Gate
 
-Continue with SCTW as the main method only if the next diagnostic round shows:
+The current evidence is strong enough to continue developing SCTW as the main method. Before
+paper-level claims, the next diagnostic round must show:
 
 - SCTW beats uniform reliably when the self-curvature profile is concentrated;
 - SCTW is competitive with, or more robust than, hand schedules across multiple geometries;
 - the profile diagnostics explain when it wins and when it does not.
 
-If tuned hand schedules dominate everywhere, reframe SCTW as a diagnostic for schedule selection
-rather than as a standalone sampler.
+If tuned hand schedules dominate after proper tuning, reframe SCTW as a diagnostic and automatic
+schedule-selection method rather than as a standalone sampler.

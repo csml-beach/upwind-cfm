@@ -271,11 +271,11 @@ changes assignments.
 
 ## SCTW Sampler Evaluation
 
-The current sampler-side evaluation uses the unconditional Sinkhorn OT large
-UNet/EMA checkpoint and changes only the inference time grid. Training is
-unchanged.
+The current sampler-side evaluation changes only the inference time grid. Training is unchanged.
+We have now revisited both the unconditional Sinkhorn OT checkpoint and the earlier
+class-conditional minibatch-OT checkpoint under the SCTW thesis.
 
-Result locations:
+### Unconditional CIFAR-10
 
 - `results/cifar10_uncond_coupling_large_100k/runs/cifar10_uncond_sinkhorn_ot_large_16x16_seed0/eval_e1_warped_5000/`
 - `results/cifar10_uncond_coupling_large_100k/runs/cifar10_uncond_sinkhorn_ot_large_16x16_seed0/eval_e1_warped_p025_5000/`
@@ -301,6 +301,28 @@ Interpretation:
 - This result should be paired with staged-shapes, where a hand early schedule
   is stronger, to make the honest claim: SCTW is adaptive and interpretable, not
   universally dominant.
+
+### Conditional CIFAR-10 Revisit
+
+We also evaluated the existing conditional large UNet/EMA checkpoint:
+
+- `results/cifar10_coupling_large_100k/runs/cifar10_minibatch_ot_large_16x16_seed0/eval_sctw_p05_5000/`
+- `results/cifar10_coupling_large_100k/runs/cifar10_minibatch_ot_large_16x16_seed0/eval_sctw_p025_5000/`
+- `results/cifar10_coupling_large_100k/runs/cifar10_minibatch_ot_large_16x16_seed0/eval_sctw_summary/`
+
+FID lower is better:
+
+| NFE | Uniform | SCTW p=0.25 | SCTW p=0.5 | Best hand power |
+| ---: | ---: | ---: | ---: | ---: |
+| 5 | 33.8547 | 33.6035 | 35.0750 | 37.4262 |
+| 10 | 26.1458 | 25.1969 | 24.9058 | 25.5277 |
+| 20 | 22.7155 | 21.5815 | 21.1597 | 21.3782 |
+| 50 | 20.6087 | 20.0005 | 19.7164 | 19.7513 |
+
+Conditional classifier accuracy stayed nearly flat across schedules. This is a useful positive
+result for the sampler-time thesis: SCTW improves FID without an obvious loss of class fidelity.
+The caveat is that the conditional model already receives the label, so the benchmark tests
+integration quality more than multimodal coupling difficulty.
 
 ## Deferred Avenues
 

@@ -147,6 +147,24 @@ Do not call this pressure-aware in the method name. It is motivated by the press
 derivative narrative, but the deployed sampler does not compute oracle pressure, pressure
 gradients, or pressure budgets. It is a self-curvature/adaptive-time sampler.
 
+### Revisited Evidence Under The SCTW Thesis
+
+The main revisited experiments now give a positive but not overclaimable picture:
+
+- **Conditional CIFAR-10:** SCTW improves FID over uniform Euler at NFE 5/10/20/50 on the existing
+  conditional minibatch-OT EMA checkpoint. Classifier accuracy is nearly unchanged, so the gain is
+  plausibly integration quality rather than label drift.
+- **Unconditional CIFAR-10:** SCTW improves FID over uniform at NFE 10/20/50 on the large
+  Sinkhorn-OT EMA checkpoint. NFE 5 remains brittle for aggressive warping.
+- **Staged-shapes easy:** SCTW strongly improves over uniform, but a simple tuned early hand
+  schedule is still better. This is the key caution against claiming schedule dominance.
+- **GM16 and low-dimensional visual checks:** GM16, `five_modes`, and `fan_modes` support the
+  low-NFE advantage; `spiral` is mixed and should be presented as a caveat or diagnostic case.
+
+Working claim: SCTW is a cheap, model-adaptive schedule that often improves low-NFE Euler and
+gives interpretable time-allocation diagnostics. It is not yet evidence that learned
+self-curvature schedules universally beat tuned hand schedules.
+
 ## X1: the gain law
 
 `results/phase1/x1_gain_vs_kappa_e1.png` — realized gain (uniform / E1-warped integration
