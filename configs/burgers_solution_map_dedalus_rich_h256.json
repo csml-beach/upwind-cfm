@@ -1,0 +1,33 @@
+{
+  "dataset": "burgers_solution_map",
+  "dataset_kwargs": {
+    "cache_path": "data/burgers/dedalus_rich_n128_32_nx128_nt64.npz"
+  },
+  "method": "standard_cfm",
+  "model": "unet1d",
+  "model_kwargs": {
+    "hidden": 256
+  },
+  "seed": 42,
+  "solver": "euler",
+  "solver_kwargs": {
+    "steps": 5,
+    "noise": 0.0
+  },
+  "train": {
+    "batch_size": 128,
+    "max_steps": 12000,
+    "log_every": 500,
+    "lr": 0.0003,
+    "grad_clip": 1.0,
+    "ema": true,
+    "ema_decay": 0.999,
+    "save_checkpoint": false,
+    "save_failed_checkpoint": false
+  },
+  "eval": {
+    "n_eval": 32,
+    "nfe_values": [5, 10, 20, 50]
+  },
+  "run_name": "burgers_solution_map_dedalus_rich_h256_seed42"
+}

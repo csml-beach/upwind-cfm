@@ -1,0 +1,5 @@
+outs:
+- md5: 0ed1ccd867e2c92c103ace9c9c29e732
+  size: 4800467
+  hash: md5
+  path: dedalus_rich_n128_32_nx128_nt64.npz

@@ -153,6 +153,10 @@ The revisited experiments now support a positive but careful thesis:
   staged-shapes, `five_modes`, and `fan_modes`.
 - Hand schedules remain serious competitors, especially on deliberately early-stiff staged
   geometries.
+- Hard 1D Burgers solution-map is useful as a learned-ODE integration stress test. On the richer
+  Dedalus cache with h256/EMA, SCTW improves integration error to a Heun-1000 reference over
+  uniform Euler at NFE 5/10/20/50, while endpoint PDE RMSE remains affected by learned-model bias
+  and can favor tuned hand schedules.
 - The method should be framed as a model-adaptive schedule with interpretable diagnostics, not as
   a universal dominator of tuned schedules.
 

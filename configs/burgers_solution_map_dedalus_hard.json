@@ -1,0 +1,30 @@
+{
+  "dataset": "burgers_solution_map",
+  "dataset_kwargs": {
+    "cache_path": "/home/exouser/upwind-cfm-data/burgers/dedalus_hard_n256_64_nx128_nt64.npz"
+  },
+  "method": "standard_cfm",
+  "model": "unet1d",
+  "model_kwargs": {
+    "hidden": 96
+  },
+  "seed": 42,
+  "solver": "euler",
+  "solver_kwargs": {
+    "steps": 5,
+    "noise": 0.0
+  },
+  "train": {
+    "batch_size": 128,
+    "epochs": 6000,
+    "log_every": 300,
+    "lr": 0.001,
+    "checkpoint_every": 0,
+    "save_checkpoint": true
+  },
+  "eval": {
+    "n_eval": 64,
+    "nfe_values": [5, 10, 20, 50]
+  },
+  "run_name": "burgers_solution_map_dedalus_hard_seed42"
+}

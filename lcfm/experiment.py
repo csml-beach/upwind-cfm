@@ -340,6 +340,35 @@ def eval_burgers_autoregressive(problem, model, config, device):
     }
 
 
+def _periodic_spatial_gradient(x):
+    return torch.roll(x, shifts=-1, dims=-1) - x
+
+
+@torch.no_grad()
+def eval_burgers_solution_map(problem, model, config, device):
+    eval_cfg = config.get("eval", {})
+    n_eval = int(eval_cfg.get("n_eval", min(64, problem.n_test)))
+    nfe_values = eval_cfg.get("nfe_values", [5, 10, 20, 50])
+    eval_seed = int(eval_cfg.get("eval_seed", 1234))
+    set_seed(eval_seed)
+    x0 = problem.eval_initial(n_eval, device)
+    target = problem.target_eval(n_eval, device)
+    target_grad = _periodic_spatial_gradient(target)
+    metrics = {"n_eval": n_eval}
+    for steps in nfe_values:
+        steps = int(steps)
+        traj = solve(config.get("solver", "euler"), model, x0, {"steps": steps})
+        samples = traj[-1]
+        sample_grad = _periodic_spatial_gradient(samples)
+        prefix = f"nfe_{steps}"
+        metrics[f"{prefix}_rmse"] = rmse(samples, target)
+        metrics[f"{prefix}_spatial_grad_rmse"] = rmse(sample_grad, target_grad)
+        metrics[f"{prefix}_mean_path_length"] = mean_path_length(traj)
+        metrics[f"{prefix}_path_length_ratio"] = path_length_ratio(traj)
+        metrics[f"{prefix}_trajectory_acceleration"] = trajectory_acceleration(traj)
+    return metrics
+
+
 @torch.no_grad()
 def eval_checkerboard_refinement(problem, model, config, device):
     eval_cfg = config.get("eval", {})
@@ -406,6 +435,8 @@ def evaluate(problem, model, config, device, out_dir=None):
         return eval_five_modes(problem, model, config, device)
     if problem.name == "burgers_autoregressive":
         return eval_burgers_autoregressive(problem, model, config, device)
+    if problem.name == "burgers_solution_map":
+        return eval_burgers_solution_map(problem, model, config, device)
     if problem.name == "checkerboard_refinement":
         return eval_checkerboard_refinement(problem, model, config, device)
     if hasattr(problem, "image_shape"):

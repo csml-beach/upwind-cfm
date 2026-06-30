@@ -1,0 +1,6 @@
+outs:
+- md5: 516965840f7c64750ca0e4b1b20a9572.dir
+  size: 47954692
+  nfiles: 10
+  hash: md5
+  path: burgers_solution_map_dedalus_rich

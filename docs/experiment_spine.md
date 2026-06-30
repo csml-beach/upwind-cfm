@@ -9,13 +9,15 @@ run configuration so we can compare low-NFE flow-matching ideas without duplicat
 - Register methods, pairings, solvers, and schedules by name.
 - Keep training regularization separate from inference-time solvers.
 - Write comparable run artifacts for every experiment.
-- Use Burgers only as an autoregressive dynamics task, not flattened surface generation.
+- Keep `burgers_autoregressive` as the adjacent-frame dynamics task, and use
+  `burgers_solution_map` for initial-condition-to-final-solution transport.
+  Do not revive the older flattened surface-generation task.
 
 ## Layout
 
 ```text
 lcfm/
-  datasets.py       # spiral, mode mixtures, fan modes, burgers_autoregressive
+  datasets.py       # spiral, mode mixtures, fan modes, burgers tasks
   models.py         # MLP and 1D U-Net
   losses.py         # standard CFM, LC, Iso-FD, directional regularization
   pairing.py        # optional training-time source-target batch pairing
@@ -43,6 +45,12 @@ configs/
   controlled shape modes at unequal positions/scales, intended as an image-like
   analogue of `staged_modes`.
 - `burgers_autoregressive`: learns frame-to-next-frame flow and rolls out autoregressively.
+- `burgers_solution_map`: learns a paired map from an initial Burgers condition to a later
+  solution state. The initial stable SCTW stress setting uses richer Fourier initial conditions
+  and longer final time so a single CFM bridge carries more physical change. Lower-viscosity
+  sweeps are a natural follow-up, but they may require a more robust PDE generator.
+  The current Dedalus hard setting is 1D Burgers, not a 2D field: cached videos have shape
+  `(n_samples, nt, nx)` and the CFM trains on the initial-to-final map `R^nx -> R^nx`.
 
 The older flattened Burgers surface-generation task should not be used for new comparisons.
 

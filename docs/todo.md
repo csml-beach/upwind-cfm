@@ -41,6 +41,8 @@
   - unconditional CIFAR: SCTW improves FID over uniform at NFE 10/20/50;
   - staged-shapes: SCTW strongly beats uniform but remains behind a tuned early hand schedule;
   - `five_modes` and `fan_modes`: SCTW gives clear low-NFE gains over uniform;
+  - hard 1D Burgers solution-map: SCTW improves learned-ODE integration error over uniform, but
+    endpoint PDE RMSE is confounded by model bias and tuned hand schedules;
   - `spiral`: mixed, useful as a caveat rather than a headline.
 - Decide whether the main quantitative claim uses:
   - both conditional and unconditional CIFAR;

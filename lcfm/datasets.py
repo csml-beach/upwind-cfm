@@ -796,6 +796,97 @@ class BurgersAutoregressiveProblem:
         return self.test_videos[:n_eval].to(device)
 
 
+class BurgersSolutionMapProblem:
+    name = "burgers_solution_map"
+
+    def __init__(self, config):
+        self.cache_path = config.get("cache_path")
+        self.n_train = config.get("n_train", 1000)
+        self.n_test = config.get("n_test", 100)
+        self.nx = config.get("nx", 64)
+        self.nt = config.get("nt", 64)
+        self.nu = config.get("nu", 0.02)
+        self.final_time = config.get("final_time", 1.5)
+        self.ic_type = config.get("ic_type", "fourier")
+        self.n_fourier_modes = config.get("n_fourier_modes", 3)
+        self.spectral_decay = config.get("spectral_decay", 1.5)
+        self.ic_scale = config.get("ic_scale", 0.3)
+        self.ode_mxstep = config.get("ode_mxstep", 5000)
+        self.dim = self.nx
+        if self.cache_path:
+            self.train_videos, self.test_videos = self._load_cache(self.cache_path)
+            self.n_train = self.train_videos.shape[0]
+            self.n_test = self.test_videos.shape[0]
+            self.nt = self.train_videos.shape[1]
+            self.nx = self.train_videos.shape[2]
+            self.dim = self.nx
+        else:
+            self.train_videos = self._make_data(self.n_train)
+            self.test_videos = self._make_data(self.n_test)
+        self.train_x0 = self.train_videos[:, 0, :]
+        self.train_x1 = self.train_videos[:, -1, :]
+        self.test_x0 = self.test_videos[:, 0, :]
+        self.test_x1 = self.test_videos[:, -1, :]
+
+    def _load_cache(self, path):
+        payload = np.load(Path(path).expanduser(), allow_pickle=False)
+        train = torch.tensor(payload["train_videos"], dtype=torch.float32)
+        test = torch.tensor(payload["test_videos"], dtype=torch.float32)
+        if train.ndim != 3 or test.ndim != 3:
+            raise ValueError("Burgers solution-map cache must contain 3D train_videos/test_videos arrays.")
+        if train.shape[1:] != test.shape[1:]:
+            raise ValueError("Cached train/test Burgers videos must have matching nt and nx.")
+        return train, test
+
+    def _sample_initial_condition(self, x):
+        if self.ic_type == "phase_sine":
+            phi = np.random.uniform(0, 2 * np.pi)
+            return np.sin(x - phi)
+        if self.ic_type != "fourier":
+            raise ValueError("BurgersSolutionMapProblem ic_type must be 'fourier' or 'phase_sine'.")
+
+        u0 = np.zeros_like(x)
+        for k in range(1, self.n_fourier_modes + 1):
+            scale = 1.0 / (k**self.spectral_decay)
+            amp_sin = np.random.normal(0.0, scale)
+            amp_cos = np.random.normal(0.0, scale)
+            u0 += amp_sin * np.sin(k * x) + amp_cos * np.cos(k * x)
+        u0 = u0 - u0.mean()
+        u0 = u0 / (u0.std() + 1e-8)
+        return self.ic_scale * u0
+
+    def _make_data(self, n_samples):
+        length = 2.0 * np.pi
+        dx = length / self.nx
+        x = np.linspace(0, length, self.nx, endpoint=False)
+        t = np.linspace(0, self.final_time, self.nt)
+        data = []
+        for _ in range(n_samples):
+            u0 = self._sample_initial_condition(x)
+            sol = odeint(burgers_rhs, u0, t, args=(dx, self.nu), mxstep=self.ode_mxstep)
+            data.append(sol)
+        tensor = torch.tensor(np.array(data), dtype=torch.float32)
+        mean = tensor.mean(dim=(1, 2), keepdim=True)
+        std = tensor.std(dim=(1, 2), keepdim=True)
+        return (tensor - mean) / (std + 1e-5)
+
+    def sample_train_batch(self, batch_size, device):
+        idx = torch.randint(self.train_x0.shape[0], (batch_size,))
+        return self.train_x0[idx].to(device), self.train_x1[idx].to(device)
+
+    def eval_initial(self, n_eval, device):
+        if n_eval <= self.test_x0.shape[0]:
+            return self.test_x0[:n_eval].to(device)
+        idx = torch.randint(self.test_x0.shape[0], (n_eval,))
+        return self.test_x0[idx].to(device)
+
+    def target_eval(self, n_eval, device):
+        if n_eval <= self.test_x1.shape[0]:
+            return self.test_x1[:n_eval].to(device)
+        idx = torch.randint(self.test_x1.shape[0], (n_eval,))
+        return self.test_x1[idx].to(device)
+
+
 register(DATASETS, "spiral")(SpiralProblem)
 register(DATASETS, "five_modes")(FiveModesProblem)
 register(DATASETS, "fan_modes")(FanModesProblem)
@@ -806,3 +897,4 @@ register(DATASETS, "staged_shapes_easy")(StagedShapesEasyProblem)
 register(DATASETS, "checkerboard_refinement")(CheckerboardRefinementProblem)
 register(DATASETS, "checkerboard_refinement_image")(CheckerboardRefinementImageProblem)
 register(DATASETS, "burgers_autoregressive")(BurgersAutoregressiveProblem)
+register(DATASETS, "burgers_solution_map")(BurgersSolutionMapProblem)
