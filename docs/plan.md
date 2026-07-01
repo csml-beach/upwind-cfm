@@ -157,8 +157,24 @@ The revisited experiments now support a positive but careful thesis:
   Dedalus cache with h256/EMA, SCTW improves integration error to a Heun-1000 reference over
   uniform Euler at NFE 5/10/20/50, while endpoint PDE RMSE remains affected by learned-model bias
   and can favor tuned hand schedules.
+  The EMA run gives integration error reductions from uniform to SCTW p=0.5 of
+  `1.753 -> 1.671` at NFE 5, `1.424 -> 1.163` at NFE 10, `0.966 -> 0.696` at NFE 20,
+  and `0.500 -> 0.324` at NFE 50. This is the cleanest Burgers claim: SCTW better
+  integrates the learned ODE, even when endpoint PDE RMSE is confounded by learned-field bias.
 - The method should be framed as a model-adaptive schedule with interpretable diagnostics, not as
   a universal dominator of tuned schedules.
+
+### Paper-Facing Burgers Figures
+
+The hard-Burgers side study now has two useful figures:
+
+- `results/burgers_solution_map_dedalus_rich/burgers_data_breadth_examples.png` shows the range
+  of initial conditions and final PDE references in the richer Dedalus cache.
+- `results/burgers_solution_map_dedalus_rich/burgers_solution_map_dedalus_rich_h256_seed42/eval_sctw_schedules_ema/profile_diagnostic_nfe20.png`
+  shows the self-curvature profile, NFE-20 SCTW/hand meshes, and endpoint-vs-integration metrics.
+
+For the draft, Burgers should be used as a supporting numerical-integration diagnostic rather than
+the primary endpoint-quality benchmark.
 
 ## Method Depth Needed Before A Paper Claim
 
@@ -197,11 +213,9 @@ Do claim, if the next evidence supports it:
 
 ## Immediate Next Step
 
-Build a **schedule-shape diagnostic**:
+Move to a first paper draft:
 
-- plot SCTW profile density and time knots for CIFAR and staged-shapes;
-- compare against best hand power grids;
-- report early/mid/late step allocation;
-- quantify profile concentration and use it to propose an automatic `warp_power`.
-
-This is the shortest path to making the method less ad hoc.
+- state SCTW as a training-free mesh rule for learned FM ODEs;
+- derive the self-curvature/material-derivative profile and equidistribution mesh;
+- present CIFAR, staged-shapes, and hard Burgers as complementary evidence;
+- keep hand schedules as serious baselines and explicitly avoid claiming universal dominance.
