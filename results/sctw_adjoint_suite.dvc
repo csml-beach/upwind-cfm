@@ -1,0 +1,6 @@
+outs:
+- md5: d9510b72aec6d659a50216c14f0c66de.dir
+  size: 54730090
+  nfiles: 512
+  hash: md5
+  path: sctw_adjoint_suite

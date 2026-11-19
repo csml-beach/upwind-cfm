@@ -1,221 +1,193 @@
-# Active Plan: Self-Curvature Time Warping for Flow Matching
+# Active Plan: SCTW and Adjoint-SCTW
 
-## Current Thesis
+## Paper Thesis
 
-The strongest current paper direction is no longer direct pressure-aware training or
-pressure-aware coupling. Those ideas produced useful diagnostics and some positive cases, but
-they are not robust enough yet to carry the paper.
+The paper studies population-calibrated time meshes for sampling a frozen flow-matching ODE at a
+fixed neural-function-evaluation (NFE) budget. No checkpoint is retrained.
 
-The active method candidate is:
+- **SCTW** allocates Euler knots from the local material-acceleration profile.
+- **Adjoint-SCTW** weights each local Euler defect by its sensitivity to the terminal state.
 
-> **Self-Curvature Time Warping (SCTW):** a training-free, oracle-free timestep mesh for low-NFE
-> flow-matching sampling. It probes a trained velocity field along its own rollout, estimates
-> where the model has high material-derivative/self-curvature, and spends Euler steps there.
+The narrow novelty claim is population-calibrated terminal sensitivity for native flow-matching
+meshes. Adjoint models, adaptive timesteps, randomized projections, and dual-weighted residuals
+are established ideas and must not be presented as new.
 
-Pressure theory remains important, but mainly as the derivational and diagnostic lens:
+## Derivation
 
-- it explains why marginal CFM trajectories can curve in multimodal transport;
-- it explains why zero-acceleration regularizers can erase mode-commitment physics;
-- it motivates measuring pathwise acceleration/material derivative;
-- it does **not** currently give a robust training objective by itself.
-
-## Method In One Page
-
-Flow matching samples from the learned ODE
+For the frozen learned ODE
 
 $$
-\frac{dx}{dt}=v_\theta(x,t).
+\dot x=v_\theta(x,t),
 $$
 
-Along a generated trajectory, the velocity changes according to the material derivative
+the material acceleration is
 
 $$
-\frac{D v_\theta}{Dt}
-=
-\partial_t v_\theta+(v_\theta\cdot\nabla_x)v_\theta.
+a=\frac{D v_\theta}{D t}=\partial_t v_\theta+D_xv_\theta\,v_\theta.
 $$
 
-For a small Euler step,
+An Euler step of length $h_i$ has leading local defect
 
 $$
-x(t+\Delta t)
-=
-x(t)+\Delta t\,v_\theta(x(t),t)
-+\frac{\Delta t^2}{2}\frac{D v_\theta}{Dt}(x(t),t)
-+O(\Delta t^3).
+d_i\simeq \frac{h_i^2}{2}a_i.
 $$
 
-Thus coarse Euler error is driven, to first order, by the magnitude of the material derivative.
-SCTW estimates this quantity without JVPs or an oracle by a fine probe rollout:
+Let $M(1,t)=D_x\Phi_{1,t}$ be the state tangent of the learned flow. Since the defect is injected
+at the end of step $i$,
 
 $$
-e(t_i)\approx
-\frac{\|v_\theta(x_{i+1},t_{i+1})-v_\theta(x_i,t_i)\|}{\Delta t}.
+d_i^{\mathrm{terminal}}\simeq M(1,t_{i+1})d_i.
 $$
 
-It then builds a nonuniform time mesh using a tempered density
+This gives two profiles:
 
 $$
-\rho(t)=(e(t)+\epsilon)^p.
+e_i=\|a_i\|,\qquad q_i=\|M(1,t_{i+1})a_i\|.
 $$
 
-Current image-scale defaults:
+SCTW uses $e_i$. Adjoint-SCTW uses $q_i$.
 
-- `profile_samples = 512`
-- `profile_fine_steps = 50`
-- `warp_power = 0.25`
-- `warp_floor = 1e-3`
+### Three Transport Estimators
 
-The raw Euler equal-error exponent would be near `p = 0.5`; `p = 0.25` is a tempered version
-that is less brittle at very low NFE.
+1. **Centered finite difference:** perturb the state at $t_{i+1}$ along $a_i/\|a_i\|$, roll both
+   perturbations to the endpoint, and estimate the directional gain.
+2. **Exact discrete JVP:** initialize the tangent with $a_i$ and propagate it through JVPs of the
+   discrete Heun pilot steps.
+3. **Randomized discrete adjoint:** draw terminal probes $z_r$, reverse-propagate
+   $\lambda_{i+1}^{(r)}=M(1,t_{i+1})^Tz_r$, and estimate
 
-## What Is Actually Different
+   $$
+   \widehat q_i=\left[\frac{1}{R}\sum_{r=1}^R
+   (a_i^T\lambda_{i+1}^{(r)})^2\right]^{1/2}.
+   $$
 
-SCTW is not novel because it uses nonuniform timesteps. That idea is common. The possible
-contribution is narrower:
+FD and JVP are verification methods. Randomized adjoint with declared default `R=4` is the
+scalable method. The implementation recomputes and differentiates one Heun step at a time during
+the reverse pass, so activation memory does not grow with the number of fine steps.
+The squared estimator is unbiased, while taking its square root introduces finite-`R` bias; the
+declared `R` and probe-seed audits measure that approximation rather than tuning it away.
 
-> A cheap, training-free, native-CFM schedule built from the model's own pathwise
-> material-derivative/self-curvature profile, with no learned solver, no dynamic programming,
-> no oracle pressure field, and no retraining.
+## Mesh Rule
 
-Compared with Iso-FM-style finite-difference regularization, SCTW does not change the learned
-field. Iso-FM tries to make the field easier to integrate by reducing material acceleration
-during training; SCTW accepts the learned field and changes where the inference budget is spent.
+For either $r(t)=e(t)$ or $r(t)=q(t)$, define
 
-Compared with bespoke or learned solvers, SCTW keeps the update rule fixed as Euler and only
-changes the mesh. This is weaker but simpler, cheaper, and easier to isolate scientifically.
+$$
+\rho_p(t)=(r(t)+\epsilon)^p,
+\qquad p\in\{0.25,0.5\}.
+$$
 
-Compared with hand schedules such as early/late/symmetric power grids, SCTW is data/model-adaptive.
-This distinction matters because staged-shapes prefers an aggressive early schedule, while CIFAR-10
-does not. A fixed hand schedule can win on one benchmark for the wrong reason; SCTW should win or
-remain competitive without choosing the schedule family by hand.
+The knots are quantiles of the cumulative density. `p=0.5` is the Euler-derived equal-defect rule;
+`p=0.25` is a declared tempering ablation. Both values are reported, never selected post hoc.
 
-## Current Evidence
+## Calibration Protocol
 
-### CIFAR-10 Conditional Minibatch-OT Model
+- fine Heun steps: `50`
+- transport anchors: `16`
+- adjoint probes: `R=4`
+- pilot seed: `1311`
+- adjoint seed: `2718`
+- evaluation seed: `1234`
+- low-dimensional and GM16 pilots: `512`
+- Burgers pilots: `32` training cases
+- image pilots: `100`; conditional CIFAR uses exactly 10 examples per class
+- CIFAR chunk size: `4`, with deterministic recorded fallback to `2` then `1` on OOM
+- staged-shapes chunk size: `8`
+- CIFAR reference split: train; Inception weights and real-feature caches are SHA-versioned
+- KID subset seed: `1234`, shared by every method
 
-EMA model, 5000 samples, class-balanced labels, FID lower is better:
+Calibration priors are disjoint from evaluation priors. The JSON profile bundle records estimator
+version, seeds, pilot counts, batching, fine steps, anchor times, local acceleration, terminal
+gain, transported profile, powers, perturbations, runtime, peak memory, and all generated grids.
 
-| NFE | Uniform | SCTW p=0.25 | SCTW p=0.5 | Best hand power |
-| ---: | ---: | ---: | ---: | ---: |
-| 5 | 33.8547 | 33.6035 | 35.0750 | 37.4262 |
-| 10 | 26.1458 | 25.1969 | 24.9058 | 25.5277 |
-| 20 | 22.7155 | 21.5815 | 21.1597 | 21.3782 |
-| 50 | 20.6087 | 20.0005 | 19.7164 | 19.7513 |
+## Full Endpoint Suite
 
-Interpretation: SCTW improves FID over uniform at every tested NFE on this conditional CIFAR
-checkpoint. The tempered `p=0.25` variant is best at NFE 5, while the more aggressive `p=0.5`
-variant is best at NFE 10/20/50. Conditional classifier accuracy is essentially unchanged, so the
-gain appears to come from better low-NFE integration rather than label-fidelity drift.
+Existing checkpoints only:
 
-### CIFAR-10 Unconditional Sinkhorn Model
+| Benchmark | Checkpoints | Evaluation |
+| --- | ---: | ---: |
+| Five modes, fan modes, spiral | 1 each | 1,000 samples |
+| GM16 | seeds 0, 1, 2 | 1,000 samples each |
+| Staged-shapes easy | Sinkhorn EMA | 1,000 samples |
+| Hard Burgers solution map | h256 EMA | 32 held-out cases |
+| Conditional CIFAR-10 | large 16x16 minibatch-OT EMA | 5,000 samples |
+| Unconditional CIFAR-10 | large 16x16 Sinkhorn EMA | 5,000 samples |
 
-EMA model, 5000 samples, FID lower is better:
+At NFE `{5,10,20,50}`, compare uniform Euler; SCTW and Adjoint-SCTW at both powers; early, late,
+and symmetric power meshes with rho `{2,3}`; VSFM coasting and uniform-deceleration grids; and
+uniform Heun at matched actual NFE. A BOSS-style dynamic program is retained on low-dimensional,
+GM16, and Burgers cases as an offline optimizer of an additive one-step-defect surrogate. It is
+not a mathematical ceiling on endpoint error.
 
-| NFE | Uniform | SCTW p=0.25 | SCTW p=0.5 | Best hand power |
-| ---: | ---: | ---: | ---: | ---: |
-| 5 | 41.4147 | 41.7388 | 44.9989 | 47.8957 |
-| 10 | 28.9758 | 28.3254 | 28.7508 | 30.0170 |
-| 20 | 23.8106 | 22.9072 | 22.7874 | 23.3659 |
-| 50 | 20.9632 | 20.3763 | 20.2047 | 20.3376 |
+## Equivalence Tier
 
-Interpretation: SCTW beats uniform at NFE 10/20/50 and beats the tested hand power schedules.
-The NFE 5 case is not solved: p=0.25 is close to uniform, and p=0.5 is too aggressive.
+On all three visual problems, GM16 seed 0, Burgers, and small image pilot subsets, compare FD,
+JVP, and adjoint profiles using:
 
-### Staged-Shapes Easy
+- normalized profile L2 error against JVP;
+- maximum knot displacement;
+- learned-ODE integration error on common priors;
+- calibration runtime and peak memory;
+- FD epsilon `{1e-3,3e-3}`;
+- adjoint `R={2,4,8}` and probe seeds `{7,2718,31415}`.
 
-Feature W1 lower is better:
+Only `R=4` proceeds to full endpoint metrics.
 
-| NFE | Uniform | SCTW p=0.25 | SCTW p=0.5 | Best hand power |
-| ---: | ---: | ---: | ---: | ---: |
-| 5 | 1.5238 | 1.3754 | 1.0118 | 0.9187 |
-| 10 | 1.3524 | 1.0482 | 0.8757 | 0.8116 |
-| 20 | 1.0977 | 0.8952 | 0.7861 | 0.7433 |
-| 50 | 0.8892 | 0.7823 | 0.7286 | 0.7149 |
+## Local Status
 
-Interpretation: SCTW beats uniform, but a simple early-concentrated hand schedule beats it.
-This is a warning. We should not claim schedule dominance. The better claim is adaptivity across
-problems and a principled diagnostic for when nonuniform stepping should help.
+The local endpoint tier is complete for five modes, fan modes, spiral, GM16 seeds 0--2, and hard
+Burgers. At NFE 5, Adjoint-SCTW with `p=0.5` improves learned-ODE integration error over SCTW on
+fan modes, spiral, GM16, and Burgers, while SCTW remains better on five modes. On GM16, the
+three-seed mean falls from about `0.527` for uniform Euler to `0.263` for SCTW and `0.237` for
+Adjoint-SCTW. On Burgers, the corresponding values are `1.756`, `1.673`, and `1.250`.
 
-### Low-Dimensional Complementary Checks
+The equivalence tier supports the estimator but also exposes one necessary caveat. Adjoint `R=4`
+stays below the declared `10%` normalized-profile error and within `5%` of JVP schedule integration
+error on every completed local case; probe-seed endpoint variation is also below `5%`. The declared
+FD perturbations pass on fan, spiral, GM16, and Burgers, but fail on five modes because `1e-3` is
+outside its local linear regime. A separate convergence audit reaches `0.23%` profile error at
+`1e-4`, then shows float32 cancellation at still smaller epsilon. The failure remains in the
+reported artifact rather than being replaced post hoc.
 
-Fresh one-seed checks on `spiral`, `five_modes`, and `fan_modes` support the same direction but
-with problem-dependent strength. SCTW is strongest on `five_modes` and `fan_modes`, especially at
-low NFE, while `spiral` is mixed and sometimes favors an early hand schedule. These are useful
-visual/mechanism cases, not final statistical evidence.
+Burgers also illustrates the method boundary: time-mesh improvements materially reduce error to
+the learned ODE's fine Heun trajectory, while endpoint PDE RMSE remains almost unchanged. This is
+evidence for improved numerical integration, not corrected vector-field bias.
 
-### Evidence Summary
+The remote endpoint tier is also complete. Staged-shapes is the strongest positive result:
+Adjoint-SCTW with p=0.5 beats uniform, SCTW, and every tested fixed Euler mesh in feature W1 at
+NFE 5, 10, 20, and 50; at NFE 5 the values are 1.524, 1.017, and 0.870 for
+uniform/SCTW/Adjoint-SCTW. Conditional and unconditional CIFAR are more cautious. SCTW improves
+FID over uniform at NFE 10, 20, and 50, while Adjoint-SCTW lowers learned-ODE integration error
+but generally does not beat SCTW in FID. Across schedules, integration error and feature W1 are
+nearly rank-aligned on staged-shapes but weakly or negatively aligned with CIFAR FID at moderate
+and high NFE. This supports terminal sensitivity when the learned-ODE endpoint metric is aligned,
+not as a correction for learned-field bias.
 
-The revisited experiments now support a positive but careful thesis:
+The staged-shapes equivalence pilot is complete for adjoint seeds `7`, `2718`, and `31415`.
+At the default seed, `R=4` differs from JVP by `0.020%` in normalized profile L2 and by at most
+`1.47%` in integration error, but its maximum knot displacement is `0.034`, above the declared
+`0.02` gate. The profile is strongly concentrated near `t=0`, so cumulative-density inversion
+amplifies small normalized profile differences. Probe-seed integration variation is below `5%`
+at NFE 5, 10, and 50, but reaches `5.06%` at NFE 20. These near-failures are retained as evidence
+that profile agreement alone does not guarantee perfectly stable knots.
 
-- SCTW is consistently competitive with uniform Euler and often improves it.
-- The strongest current positives are conditional CIFAR, unconditional CIFAR at moderate NFE,
-  staged-shapes, `five_modes`, and `fan_modes`.
-- Hand schedules remain serious competitors, especially on deliberately early-stiff staged
-  geometries.
-- Hard 1D Burgers solution-map is useful as a learned-ODE integration stress test. On the richer
-  Dedalus cache with h256/EMA, SCTW improves integration error to a Heun-1000 reference over
-  uniform Euler at NFE 5/10/20/50, while endpoint PDE RMSE remains affected by learned-model bias
-  and can favor tuned hand schedules.
-  The EMA run gives integration error reductions from uniform to SCTW p=0.5 of
-  `1.753 -> 1.671` at NFE 5, `1.424 -> 1.163` at NFE 10, `0.966 -> 0.696` at NFE 20,
-  and `0.500 -> 0.324` at NFE 50. This is the cleanest Burgers claim: SCTW better
-  integrates the learned ODE, even when endpoint PDE RMSE is confounded by learned-field bias.
-- The method should be framed as a model-adaptive schedule with interpretable diagnostics, not as
-  a universal dominator of tuned schedules.
+The conditional and unconditional CIFAR equivalence pilots are complete for the same three seeds.
+Both pass every declared image-scale gate. At `R=4`, normalized profile L2 error is `1.56%` and
+`1.17%`, maximum knot displacement is `0.0066` and `0.0082`, and integration error differs from
+the exact JVP schedule by at most `0.30%`. Probe-seed variation is below `0.70%`. Exact JVP
+calibration takes about `1772--1779 s`, versus `245--247 s` for the four-probe adjoint. Therefore
+the weaker CIFAR FID outcome reflects endpoint-metric alignment rather than estimator failure.
 
-### Paper-Facing Burgers Figures
+## Scientific Decision Rule
 
-The hard-Burgers side study now has two useful figures:
+Report both methods regardless of outcome. Call terminal sensitivity successful only if it
+improves or statistically matches SCTW on most benchmark families and materially closes a hand-grid
+gap on at least one non-Burgers problem. If gains are Burgers-only, present Adjoint-SCTW as a
+sensitivity-analysis extension. If integration error improves but FID or Wasserstein does not,
+attribute the disconnect to learned-field bias rather than claiming better generation.
 
-- `results/burgers_solution_map_dedalus_rich/burgers_data_breadth_examples.png` shows the range
-  of initial conditions and final PDE references in the richer Dedalus cache.
-- `results/burgers_solution_map_dedalus_rich/burgers_solution_map_dedalus_rich_h256_seed42/eval_sctw_schedules_ema/profile_diagnostic_nfe20.png`
-  shows the self-curvature profile, NFE-20 SCTW/hand meshes, and endpoint-vs-integration metrics.
+## Negative Results Kept In Scope
 
-For the draft, Burgers should be used as a supporting numerical-integration diagnostic rather than
-the primary endpoint-quality benchmark.
-
-## Method Depth Needed Before A Paper Claim
-
-The current method is promising but still shallow. To make it paper-worthy, we need at least one
-of the following:
-
-1. **Self-tuned tempering.** Choose `warp_power` from the measured curvature profile instead of
-   fixing it. This directly addresses the CIFAR-vs-staged tradeoff.
-2. **Equidistribution derivation.** State the numerical-analysis principle clearly: the mesh is
-   approximately equalizing estimated local Euler error, possibly with a tempering factor to
-   control probe noise and error amplification.
-3. **Schedule diagnostics.** Show that the measured profile predicts when uniform Euler fails and
-   when hand early/late schedules are appropriate.
-4. **Harder baselines.** Compare against uniform Euler, tuned hand schedules, higher-order Heun,
-   and at least discuss learned/bespoke solvers and diffusion schedule optimization.
-
-Without one of these, SCTW risks being perceived as a reasonable heuristic rather than a paper
-method.
-
-## Current Non-Claims
-
-Do not claim:
-
-- that pressure-aware training is solved;
-- that pressure-aware coupling is the main image-scale contribution;
-- that SCTW dominates all hand schedules;
-- that adaptive timesteps for generative ODEs are new;
-- that the method is pressure-aware in implementation.
-
-Do claim, if the next evidence supports it:
-
-- SCTW is a simple self-curvature schedule for native flow matching;
-- it improves over uniform Euler on several low-NFE settings;
-- it can be more robust than fixed hand schedules across problem geometries;
-- the material-derivative profile is an interpretable diagnostic for low-NFE difficulty.
-
-## Immediate Next Step
-
-Move to a first paper draft:
-
-- state SCTW as a training-free mesh rule for learned FM ODEs;
-- derive the self-curvature/material-derivative profile and equidistribution mesh;
-- present CIFAR, staged-shapes, and hard Burgers as complementary evidence;
-- keep hand schedules as serious baselines and explicitly avoid claiming universal dominance.
+Pressure-aware training and pressure-aware coupling were investigated and often degraded endpoint
+quality in higher dimension. The pressure identity remains useful theory, but no oracle pressure
+field is used by either deployed sampler. Checkerboard, obsolete pressure-training runs, and
+autoregressive Burgers are excluded from the endpoint suite.

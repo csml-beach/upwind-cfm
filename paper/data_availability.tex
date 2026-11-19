@@ -1,0 +1,12 @@
+\section{Data and Code Availability}
+\label{sec:data-availability}
+
+All experiments in this draft are produced from the accompanying repository. Result artifacts are
+tracked either directly in the repository or with DVC. The Burgers Dedalus cache and the rich
+Burgers SCTW run are tracked under
+\verb|data/burgers/dedalus_rich_n128_32_nx128_nt64.npz.dvc| and
+\verb|results/burgers_solution_map_dedalus_rich.dvc|. The complete endpoint and estimator-audit
+bundle used by the current paper tables is tracked by
+\verb|results/sctw_adjoint_suite.dvc|. Its generated aggregate records every source artifact used
+for each table. Protocol details are documented in \verb|docs/plan.md| and
+\verb|docs/cifar10_benchmark.md|.

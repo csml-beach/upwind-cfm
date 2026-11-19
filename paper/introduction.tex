@@ -1,0 +1,62 @@
+\section{Introduction}
+\label{sec:introduction}
+
+Flow matching (FM) trains continuous-time generative models by regressing a neural velocity field
+against conditional vector fields along prescribed probability paths
+\citep{lipman2023flow,tong2023conditional,albergo2023stochastic}. After training, sampling
+requires solving an ordinary differential equation (ODE). If the trained velocity is
+$v_\theta:\mathbb{R}^d \times [0,1] \to \mathbb{R}^d$, generation from a source sample
+$x_0 \sim p_0$ is obtained by integrating
+\begin{equation}
+  \frac{d x(t)}{d t} = v_\theta(x(t),t), \qquad x(0)=x_0.
+  \label{eq:fm-ode}
+\end{equation}
+The computational cost of sampling is therefore dominated by neural function evaluations (NFE).
+Low-NFE generation is attractive, but it exposes a basic numerical question: where should a small
+number of time steps be placed?
+
+Several lines of work address this question indirectly. Rectified flows and optimal-transport
+conditional flow matching attempt to learn straighter or better coupled paths
+\citep{liu2022rectified,tong2023conditional}. Acceleration-regularized training methods, including
+recent Iso-FM-style objectives, penalize the material acceleration of the learned field during
+training \citep{khan2026isofm}. Learned and bespoke solvers optimize the update rule or solver
+parameters for a trained generative ODE \citep{shaul2024bespoke,shaul2024bns}. In diffusion
+sampling, trajectory-regularity and adaptive schedule methods choose nonuniform timesteps from
+properties of probability-flow trajectories \citep{chen2024trajectory,chen2024adaptive}. These
+works make clear that nonuniform timesteps are not new. The question we study is narrower:
+can a standard flow-matching checkpoint supply a cheap, native, training-free diagnostic for where
+Euler steps should be spent?
+
+This paper studies two parallel population-calibrated meshes. Self-Curvature Time Warping (SCTW)
+performs a fine, low-batch probe rollout, estimates how fast the velocity changes along generated
+trajectories, and places sampling knots at quantiles of a tempered curvature density. The
+diagnostic is the material derivative of the learned velocity field,
+\begin{equation}
+  \frac{D v_\theta}{D t}(x,t)
+  =
+  \partial_t v_\theta(x,t)
+  +
+  \nabla_x v_\theta(x,t)\, v_\theta(x,t),
+  \label{eq:material-derivative}
+\end{equation}
+but the implemented SCTW estimator avoids Jacobian--vector products: it measures finite
+differences of the velocity along the model's own rollout. Adjoint-SCTW asks a second question:
+how strongly will a local Euler defect affect the terminal sample? It propagates terminal
+sensitivity backward through the same fine pilot with randomized state adjoints and weights the
+local profile accordingly. The checkpoint remains frozen, and one population mesh is reused for
+all subsequent samples.
+
+The contribution is intentionally modest and, we believe, scientifically useful:
+\begin{itemize}
+  \item We derive a time-mesh rule for Euler sampling from the local truncation error induced by
+  the material derivative of a learned FM velocity.
+  \item We formulate terminally transported Euler defects through the flow-map tangent and derive
+  finite-difference, exact JVP, and randomized discrete-adjoint estimators of the same profile.
+  \item We connect the local material acceleration to an exact pressure/momentum identity for linear-interpolant
+  FM, explaining why marginal trajectories can curve even when conditional paths are straight.
+  \item We compare both adaptive meshes with uniform Euler, matched-NFE Heun, VSFM schedules,
+  early-, late-, and symmetric-heavy meshes, and a low-dimensional offline schedule optimizer.
+  \item We separate learned-ODE integration error from endpoint distribution quality. Their strong
+  alignment on staged-shapes and weak or negative alignment on CIFAR explains both the principal
+  positive result and the principal limitation.
+\end{itemize}

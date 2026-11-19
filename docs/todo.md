@@ -1,88 +1,54 @@
-# Active Todo
+# Active Todo: SCTW and Adjoint-SCTW
 
-## Priority 1: Make SCTW Less Ad Hoc
+## Engineering
 
-- Finish schedule-shape diagnostics for CIFAR and staged-shapes:
-  - plot self-curvature profile `e(t)`;
-  - plot SCTW knots for `warp_power` values;
-  - plot best hand power knots;
-  - report early/mid/late step allocation.
-- Add scalar profile diagnostics:
-  - concentration/kappa;
-  - fraction of curvature mass before `t <= 0.2`;
-  - entropy or effective support of the profile;
-  - max/mean profile ratio.
-- Propose and test an automatic `warp_power` rule from the profile diagnostics.
+- [x] Implement constant-memory stepwise discrete adjoint.
+- [x] Add the shared profile bundle/cache API.
+- [x] Use one sampler vocabulary: `uniform`, `sctw`, `adjoint_sctw`, `power`, `vsfm`, `heun`.
+- [x] Bind conditional CIFAR labels exactly during calibration.
+- [x] Add analytic tangent, FD/JVP, cache replay, and NFE-accounting checks.
+- [x] Add suite-level endpoint and profile-equivalence aggregation.
+- [x] Cache versioned real Inception features and pair KID subset randomness across methods.
+- [x] Complete staged-shapes and CIFAR GPU endpoint integration checks.
+- [x] Add amortized calibration cost columns to the aggregate report.
 
-## Priority 2: Strengthen Baselines
+## Local Experiments
 
-- Keep uniform Euler at NFE `{5, 10, 20, 50}`.
-- Keep hand power schedules:
-  - early;
-  - late;
-  - symmetric;
-  - several `rho` values.
-- Add at least one diffusion-style hand schedule if it fits the FM time parameterization:
-  - cosine-like;
-  - EDM/Karras-like;
-  - log-SNR-like only if the parameterization is scientifically honest.
-- Keep Heun at matched NFE budget where meaningful.
-- Add a validation-searched monotone schedule as an empirical upper bound if it is cheap enough.
+- [x] Five modes full endpoint evaluation.
+- [x] Fan modes full endpoint evaluation.
+- [x] Spiral full endpoint evaluation.
+- [x] GM16 seeds 0, 1, 2 full endpoint evaluation.
+- [x] Hard Burgers full endpoint and equivalence evaluation.
+- [x] Run the local equivalence tier with all declared probe seeds.
+- [x] Check local Heun-1000 versus Heun-2000 acceptance ratios.
 
-## Priority 3: Paper-Facing Experiments
+## Remote Experiments
 
-- Re-run SCTW/hand/uniform comparisons with cleaned scripts and fixed evaluation seeds where needed.
-- Produce side-by-side plots for:
-  - CIFAR samples at low NFE;
-  - staged-shapes samples/trajectories;
-  - profile/time-grid diagnostics.
-- Current positive/competitive evidence to preserve:
-  - conditional CIFAR: SCTW improves FID over uniform at NFE 5/10/20/50;
-  - unconditional CIFAR: SCTW improves FID over uniform at NFE 10/20/50;
-  - staged-shapes: SCTW strongly beats uniform but remains behind a tuned early hand schedule;
-  - `five_modes` and `fan_modes`: SCTW gives clear low-NFE gains over uniform;
-  - hard 1D Burgers solution-map: SCTW improves learned-ODE integration error over uniform, but
-    endpoint PDE RMSE is confounded by model bias and tuned hand schedules;
-  - `spiral`: mixed, useful as a caveat rather than a headline.
-- Decide whether the main quantitative claim uses:
-  - both conditional and unconditional CIFAR;
-  - staged-shapes plus CIFAR;
-  - or a third benchmark to avoid overfitting to two cases.
+- [x] Staged-shapes endpoint suite.
+- [x] Conditional CIFAR endpoint suite.
+- [x] Unconditional CIFAR endpoint suite.
+- [x] Staged-shapes small equivalence pilot, including all three declared adjoint probe seeds.
+- [x] Conditional CIFAR small equivalence pilot with all three declared probe seeds.
+- [x] Unconditional CIFAR small equivalence pilot with all three declared probe seeds.
+- [x] Check image Heun-1000 versus Heun-2000 reference convergence.
+- [x] Sync profile bundles, grids, metrics, selected sample grids, and runtime summaries.
 
-## Priority 4: Theory And Writing
+## Analysis And Paper
 
-- Write the derivation from the learned FM ODE to material derivative to Euler local error.
-- State the equidistribution principle:
-  $$
-  \Delta t_i^2 e(t_i) \approx \text{constant}
-  $$
-  or the tempered version actually used.
-- Explain why tempering may be needed:
-  - probe noise;
-  - amplification/Gronwall effects ignored by the local model;
-  - very low NFE brittleness;
-  - mismatch between population profile and individual sample difficulty.
-- Include a "what this is not" paragraph:
-  - not pressure-aware implementation;
-  - not learned solver;
-  - not training regularization;
-  - not a claim that adaptive timesteps are new.
+- [x] Add TLM, FD, discrete-adjoint, and randomized-estimator derivations.
+- [x] Add adjoint-model, DWR, neural-ODE, and Hutchinson references.
+- [x] Generate local aggregate endpoint and equivalence tables from artifacts.
+- [x] Revise abstract, introduction, results, and conclusion after all endpoint runs finish.
+- [x] Retain the five-modes FD failure and distinguish integration error from endpoint quality.
+- [x] Compile the current LaTeX draft and verify every label and citation.
+- [x] DVC-track the selected aggregate result group and paper-facing figures.
 
-## Parked
+## Acceptance Gates
 
-- Direct pressure-aware training. It is not robust enough yet.
-- Pressure-aware coupling as the main claim. CIFAR evidence is mixed/modest.
-- Per-sample SCTW. Interesting, but it may break batching or need an extra learned head.
-- Higher-order pressure/moment methods. Too much depth before the simpler sampler claim is stable.
+- FD/JVP normalized profile L2 below `2%` and maximum knot displacement below `0.02`.
+- Adjoint `R=4` profile L2 below `10%` and integration error within `5%` of JVP on equivalence cases.
+- Probe-seed endpoint integration variation below `5%`.
+- Reference self-error below `10%` of the smallest reported method gap; increase resolution if not.
+- Cached profiles reproduce identical grids and samples.
 
-## Decision Gate
-
-The current evidence is strong enough to continue developing SCTW as the main method. Before
-paper-level claims, the next diagnostic round must show:
-
-- SCTW beats uniform reliably when the self-curvature profile is concentrated;
-- SCTW is competitive with, or more robust than, hand schedules across multiple geometries;
-- the profile diagnostics explain when it wins and when it does not.
-
-If tuned hand schedules dominate after proper tuning, reframe SCTW as a diagnostic and automatic
-schedule-selection method rather than as a standalone sampler.
+These gates diagnose the method; they are not filters for suppressing negative outcomes.

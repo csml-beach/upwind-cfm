@@ -1,0 +1,689 @@
+#!/usr/bin/env python3
+"""Aggregate shared SCTW evaluator outputs and profile-equivalence audits."""
+
+import argparse
+import csv
+import json
+import math
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from lcfm.schedules import profile_equivalence_rows
+from lcfm.utils import read_json, write_json
+
+
+def parse_named_path(text):
+    if "=" not in text:
+        raise argparse.ArgumentTypeError("Expected NAME=PATH.")
+    name, path = text.split("=", 1)
+    return name, Path(path)
+
+
+def scalar_rows(payload, benchmark, source):
+    results = payload.get("results", payload.get("rows", {}))
+    if isinstance(results, list):
+        iterable = ((str(index), row) for index, row in enumerate(results))
+    else:
+        iterable = results.items()
+    rows = []
+    timings = payload.get("profile_bundle", {}).get("timings", {})
+    calibration = payload.get("profile_bundle", {}).get("calibration", {})
+    sample_count = payload.get("n_samples", payload.get("n_eval"))
+    for result_name, metrics in iterable:
+        row = {
+            "benchmark": benchmark,
+            "checkpoint_run": payload.get("run_dir"),
+            "result": result_name,
+            "source": str(source),
+        }
+        row.update({key: value for key, value in metrics.items() if not isinstance(value, (dict, list))})
+        row["pilot_seed"] = calibration.get("pilot_seed")
+        row["adjoint_seed"] = calibration.get("adjoint_seed")
+        profile = metrics.get("profile")
+        schedule = metrics.get("schedule", "")
+        if profile is None and schedule.startswith("sctw_"):
+            profile = "local"
+        elif profile is None and schedule.startswith("adjoint_sctw_"):
+            profile = "transport_adjoint_r4"
+        timing = timings.get(profile, {}) if profile else {}
+        calibration_seconds = timing.get("wall_seconds", 0.0)
+        row["calibration_seconds"] = calibration_seconds
+        row["calibration_peak_memory_mb"] = timing.get("peak_memory_mb")
+        if sample_count:
+            row["amortized_calibration_seconds_per_sample"] = float(calibration_seconds) / int(sample_count)
+        rows.append(row)
+    return rows
+
+
+def calibration_rows(bundle, benchmark, source, amortization_samples=None):
+    calibration = bundle.get("calibration", {})
+    rows = []
+    for profile, timing in sorted(bundle.get("timings", {}).items()):
+        seconds = timing.get("wall_seconds")
+        row = {
+            "benchmark": benchmark,
+            "source": str(source),
+            "profile": profile,
+            "wall_seconds": seconds,
+            "peak_memory_mb": timing.get("peak_memory_mb"),
+            "pilot_samples": calibration.get("pilot_samples"),
+            "pilot_batches": calibration.get("pilot_batches"),
+            "fine_steps": calibration.get("fine_steps"),
+            "anchor_count": calibration.get("anchor_count"),
+            "device": calibration.get("device"),
+        }
+        if seconds is not None and amortization_samples:
+            row["amortized_seconds_per_sample"] = float(seconds) / int(amortization_samples)
+        rows.append(row)
+    return rows
+
+
+def write_csv(path, rows):
+    if not rows:
+        Path(path).write_text("")
+        return
+    fields = sorted({key for row in rows for key in row})
+    with Path(path).open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def aggregate_rows(rows):
+    groups = defaultdict(list)
+    for row in rows:
+        schedule = row.get("schedule")
+        nfe = row.get("nfe", row.get("nfe_budget"))
+        if schedule is not None and nfe is not None:
+            groups[(row["benchmark"], schedule, int(nfe))].append(row)
+    output = []
+    for (benchmark, schedule, nfe), values in sorted(groups.items()):
+        summary = {"benchmark": benchmark, "schedule": schedule, "nfe": nfe, "count": len(values)}
+        numeric_keys = set.intersection(
+            *[
+                {key for key, value in row.items() if isinstance(value, (int, float)) and key not in {"nfe", "nfe_budget"}}
+                for row in values
+            ]
+        )
+        for key in sorted(numeric_keys):
+            numbers = [float(row[key]) for row in values]
+            mean = sum(numbers) / len(numbers)
+            variance = sum((value - mean) ** 2 for value in numbers) / len(numbers)
+            summary[f"{key}_mean"] = mean
+            summary[f"{key}_std"] = variance**0.5
+        output.append(summary)
+    return output
+
+
+def write_core_latex(path, aggregate):
+    lookup = {(row["benchmark"], row["schedule"], int(row["nfe"])): row for row in aggregate}
+    benchmarks = sorted({row["benchmark"] for row in aggregate})
+    schedules = ["uniform", "sctw_p0p5", "adjoint_sctw_p0p5"]
+    lines = [
+        "% Generated by scripts/aggregate_sctw_suite.py; do not edit manually.",
+        "\\begin{tabular}{llrrr}",
+        "\\toprule",
+        "Benchmark & NFE & Uniform & SCTW & Adjoint-SCTW \\\\",
+        "\\midrule",
+    ]
+    for benchmark in benchmarks:
+        for nfe in sorted({int(row["nfe"]) for row in aggregate if row["benchmark"] == benchmark}):
+            values = []
+            for schedule in schedules:
+                row = lookup.get((benchmark, schedule, nfe), {})
+                mean = row.get("integration_error_mean")
+                std = row.get("integration_error_std")
+                if mean is None:
+                    values.append("--")
+                elif int(row.get("count", 1)) > 1:
+                    values.append(f"{float(mean):.4f} $\\pm$ {float(std):.4f}")
+                else:
+                    values.append(f"{float(mean):.4f}")
+            name = benchmark.replace("_", "\\_")
+            lines.append(f"{name} & {nfe} & " + " & ".join(values) + " \\\\")
+        lines.append("\\addlinespace")
+    lines.extend(["\\bottomrule", "\\end{tabular}", ""])
+    Path(path).write_text("\n".join(lines))
+
+
+def quality_metric(aggregate, benchmark):
+    candidates = (("fid", "FID"), ("feature_w1", "feature W1"), ("wasserstein", "W1"), ("rmse", "RMSE"))
+    rows = [row for row in aggregate if row["benchmark"] == benchmark]
+    for key, label in candidates:
+        if any(row.get(f"{key}_mean") is not None for row in rows):
+            return key, label
+    return None, None
+
+
+def write_core_quality_latex(path, aggregate):
+    lookup = {(row["benchmark"], row["schedule"], int(row["nfe"])): row for row in aggregate}
+    schedules = ["uniform", "sctw_p0p5", "adjoint_sctw_p0p5"]
+    lines = [
+        "% Generated by scripts/aggregate_sctw_suite.py; do not edit manually.",
+        "\\begin{tabular}{lllrrr}",
+        "\\toprule",
+        "Benchmark & Metric & NFE & Uniform & SCTW & Adjoint-SCTW \\\\",
+        "\\midrule",
+    ]
+    for benchmark in sorted({row["benchmark"] for row in aggregate}):
+        metric, label = quality_metric(aggregate, benchmark)
+        if metric is None:
+            continue
+        for nfe in sorted({int(row["nfe"]) for row in aggregate if row["benchmark"] == benchmark}):
+            values = []
+            for schedule in schedules:
+                value = lookup.get((benchmark, schedule, nfe), {}).get(f"{metric}_mean")
+                values.append("--" if value is None else f"{float(value):.4f}")
+            name = benchmark.replace("_", "\\_")
+            lines.append(f"{name} & {label} & {nfe} & " + " & ".join(values) + " \\\\")
+        lines.append("\\addlinespace")
+    lines.extend(["\\bottomrule", "\\end{tabular}", ""])
+    Path(path).write_text("\n".join(lines))
+
+
+def write_benchmark_quality_tables(out_dir, aggregate):
+    """Write one compact, input-ready quality table per benchmark."""
+    lookup = {(row["benchmark"], row["schedule"], int(row["nfe"])): row for row in aggregate}
+    schedules = [
+        "uniform",
+        "sctw_p0p25",
+        "sctw_p0p5",
+        "adjoint_sctw_p0p25",
+        "adjoint_sctw_p0p5",
+    ]
+    headers = [
+        "Uniform",
+        "SCTW $p=0.25$",
+        "SCTW $p=0.5$",
+        "Adjoint $p=0.25$",
+        "Adjoint $p=0.5$",
+        "Best fixed",
+    ]
+    manifest = []
+    for benchmark in sorted({row["benchmark"] for row in aggregate}):
+        metric, label = quality_metric(aggregate, benchmark)
+        if metric is None:
+            continue
+        lines = [
+            "% Generated by scripts/aggregate_sctw_suite.py; do not edit manually.",
+            "\\begin{tabular}{rrrrrrr}",
+            "\\toprule",
+            "NFE & " + " & ".join(headers) + " \\\\",
+            "\\midrule",
+        ]
+        for nfe in sorted({int(row["nfe"]) for row in aggregate if row["benchmark"] == benchmark}):
+            values = []
+            for schedule in schedules:
+                value = lookup.get((benchmark, schedule, nfe), {}).get(f"{metric}_mean")
+                values.append("--" if value is None else f"{float(value):.4f}")
+            fixed_values = [
+                float(row[f"{metric}_mean"])
+                for row in aggregate
+                if row["benchmark"] == benchmark
+                and int(row["nfe"]) == nfe
+                and (row["schedule"].startswith("power_") or row["schedule"].startswith("vsfm_"))
+                and row.get(f"{metric}_mean") is not None
+            ]
+            values.append("--" if not fixed_values else f"{min(fixed_values):.4f}")
+            lines.append(f"{nfe} & " + " & ".join(values) + " \\\\")
+        lines.extend(["\\bottomrule", "\\end{tabular}", ""])
+        filename = f"quality_{benchmark}.tex"
+        Path(out_dir, filename).write_text("\n".join(lines))
+        manifest.append({"benchmark": benchmark, "metric": metric, "metric_label": label, "path": filename})
+    write_json(Path(out_dir) / "quality_tables.json", manifest)
+
+
+def write_benchmark_integration_tables(out_dir, aggregate):
+    """Write one compact core-method integration table per benchmark."""
+    lookup = {(row["benchmark"], row["schedule"], int(row["nfe"])): row for row in aggregate}
+    schedules = ["uniform", "sctw_p0p5", "adjoint_sctw_p0p5"]
+    manifest = []
+    for benchmark in sorted({row["benchmark"] for row in aggregate}):
+        if not any(
+            row["benchmark"] == benchmark and row.get("integration_error_mean") is not None
+            for row in aggregate
+        ):
+            continue
+        lines = [
+            "% Generated by scripts/aggregate_sctw_suite.py; do not edit manually.",
+            "\\begin{tabular}{rrrr}",
+            "\\toprule",
+            "NFE & Uniform & SCTW $p=0.5$ & Adjoint-SCTW $p=0.5$ \\\\",
+            "\\midrule",
+        ]
+        for nfe in sorted({int(row["nfe"]) for row in aggregate if row["benchmark"] == benchmark}):
+            values = []
+            for schedule in schedules:
+                row = lookup.get((benchmark, schedule, nfe), {})
+                mean = row.get("integration_error_mean")
+                std = row.get("integration_error_std")
+                if mean is None:
+                    values.append("--")
+                elif int(row.get("count", 1)) > 1:
+                    values.append(f"{float(mean):.4f} $\\pm$ {float(std):.4f}")
+                else:
+                    values.append(f"{float(mean):.4f}")
+            lines.append(f"{nfe} & " + " & ".join(values) + " \\\\")
+        lines.extend(["\\bottomrule", "\\end{tabular}", ""])
+        filename = f"integration_{benchmark}.tex"
+        Path(out_dir, filename).write_text("\n".join(lines))
+        manifest.append({"benchmark": benchmark, "path": filename})
+    write_json(Path(out_dir) / "integration_tables.json", manifest)
+
+
+def plot_core_integration(path, aggregate):
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    benchmarks = sorted({row["benchmark"] for row in aggregate if row.get("integration_error_mean") is not None})
+    if not benchmarks:
+        return
+    columns = min(2, len(benchmarks))
+    rows_count = math.ceil(len(benchmarks) / columns)
+    fig, axes = plt.subplots(rows_count, columns, figsize=(6.2 * columns, 4.2 * rows_count), squeeze=False)
+    styles = {
+        "uniform": ("Uniform Euler", "#333333", "o"),
+        "sctw_p0p5": ("SCTW", "#2166ac", "s"),
+        "adjoint_sctw_p0p5": ("Adjoint-SCTW", "#b2182b", "D"),
+        "heun_uniform_matched": ("Uniform Heun", "#1b7837", "^"),
+        "boss_dp": ("BOSS-style DP", "#e08214", "v"),
+    }
+    for axis, benchmark in zip(axes.flat, benchmarks):
+        for schedule, (label, color, marker) in styles.items():
+            values = sorted(
+                (row for row in aggregate if row["benchmark"] == benchmark and row["schedule"] == schedule),
+                key=lambda row: int(row["nfe"]),
+            )
+            if not values:
+                continue
+            x = [int(row["nfe"]) for row in values]
+            y = [float(row["integration_error_mean"]) for row in values]
+            yerr = [float(row.get("integration_error_std", 0.0)) for row in values]
+            axis.errorbar(x, y, yerr=yerr, color=color, marker=marker, lw=1.8, ms=5, capsize=2, label=label)
+        axis.set_xscale("log", base=2)
+        axis.set_yscale("log")
+        axis.set_xticks([5, 10, 20, 50], labels=["5", "10", "20", "50"])
+        axis.set_title(benchmark.replace("_", " "))
+        axis.set_xlabel("NFE budget")
+        axis.set_ylabel("Integration error to fine Heun")
+        axis.grid(True, which="both", alpha=0.25)
+    for axis in axes.flat[len(benchmarks) :]:
+        axis.set_visible(False)
+    axes.flat[0].legend(frameon=False, fontsize=8)
+    fig.tight_layout()
+    fig.savefig(path, dpi=220)
+    plt.close(fig)
+
+
+def plot_profile_comparison(path, bundles, nfe=20, power=0.5):
+    """Compare local and terminally transported profiles and their knots."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    selected = []
+    seen = set()
+    for benchmark, bundle in bundles:
+        if benchmark in seen:
+            continue
+        profiles = bundle.get("profiles", {})
+        if "local" not in profiles or "transport_adjoint_r4" not in profiles:
+            continue
+        selected.append((benchmark, bundle))
+        seen.add(benchmark)
+    if not selected:
+        return
+
+    columns = min(2, len(selected))
+    rows_count = math.ceil(len(selected) / columns)
+    fig, axes = plt.subplots(rows_count, columns, figsize=(6.2 * columns, 3.7 * rows_count), squeeze=False)
+    power_name = f"p{float(power):g}".replace(".", "p")
+    for axis, (benchmark, bundle) in zip(axes.flat, selected):
+        for profile_name, label, color in (
+            ("local", "SCTW local", "#2166ac"),
+            ("transport_adjoint_r4", "Adjoint-SCTW", "#b2182b"),
+        ):
+            profile = bundle["profiles"][profile_name]
+            ts = np.asarray(profile["ts"], dtype=np.float64)
+            values = np.asarray(profile["err"], dtype=np.float64)
+            values = values / max(float(np.trapezoid(values, ts)), 1e-12)
+            axis.plot(ts, values, color=color, lw=2.0, label=label)
+            grid = bundle["grids"][profile_name][power_name][str(int(nfe))]
+            rug_y = -0.04 if profile_name == "local" else -0.10
+            axis.plot(grid, [rug_y] * len(grid), "|", color=color, ms=7, mew=1.2, clip_on=False)
+        axis.axhline(0.0, color="#777777", lw=0.7)
+        axis.set_xlim(0.0, 1.0)
+        axis.set_title(benchmark.replace("_", " "))
+        axis.set_xlabel("Flow time")
+        axis.set_ylabel("Normalized profile")
+        axis.grid(True, alpha=0.22)
+    for axis in axes.flat[len(selected) :]:
+        axis.set_visible(False)
+    axes.flat[0].legend(frameon=False, fontsize=8)
+    fig.suptitle(f"Local and terminal-sensitivity profiles; rugs show NFE {nfe} knots", y=1.0)
+    fig.tight_layout()
+    fig.savefig(path, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+
+
+def equivalence_acceptance(rows):
+    groups = defaultdict(list)
+    for row in rows:
+        groups[(row["benchmark"], row["source"], row["profile"])].append(row)
+    output = []
+    for (benchmark, source, profile), values in sorted(groups.items(), key=lambda item: str(item[0])):
+        profile_error = max(float(row["normalized_profile_l2"]) for row in values)
+        knot_error = max(float(row["max_knot_displacement"]) for row in values)
+        limit = 0.02 if profile.startswith("transport_fd_") else 0.10 if profile == "transport_adjoint_r4" else None
+        output.append(
+            {
+                "benchmark": benchmark,
+                "source": source,
+                "profile": profile,
+                "normalized_profile_l2": profile_error,
+                "max_knot_displacement": knot_error,
+                "profile_l2_limit": limit,
+                "profile_l2_pass": profile_error <= limit if limit is not None else None,
+                "knot_displacement_pass": knot_error < 0.02,
+            }
+        )
+    return output
+
+
+def probe_stability(rows):
+    groups = defaultdict(list)
+    for row in rows:
+        if row.get("schedule", "").startswith("adjoint_sctw_") and row.get("integration_error") is not None:
+            groups[(row["benchmark"], row.get("checkpoint_run"), row["schedule"], int(row.get("nfe", row.get("nfe_budget"))))].append(row)
+    output = []
+    for (benchmark, checkpoint, schedule, nfe), values in sorted(groups.items(), key=lambda item: str(item[0])):
+        seeds = {row.get("adjoint_seed") for row in values}
+        if len(seeds) < 2:
+            continue
+        errors = [float(row["integration_error"]) for row in values]
+        mean = sum(errors) / len(errors)
+        relative_range = (max(errors) - min(errors)) / max(abs(mean), 1e-12)
+        output.append(
+            {
+                "benchmark": benchmark,
+                "checkpoint_run": checkpoint,
+                "schedule": schedule,
+                "nfe": nfe,
+                "probe_seeds": sorted(int(seed) for seed in seeds if seed is not None),
+                "integration_error_mean": mean,
+                "integration_error_relative_range": relative_range,
+                "pass_below_5_percent": relative_range < 0.05,
+            }
+        )
+    return output
+
+
+def adjoint_jvp_agreement(rows):
+    groups = defaultdict(dict)
+    for row in rows:
+        if row.get("integration_error") is None:
+            continue
+        nfe = row.get("nfe", row.get("nfe_budget"))
+        groups[(row["benchmark"], row["source"], int(nfe))][row.get("schedule")] = row
+    output = []
+    for (benchmark, source, nfe), schedules in sorted(groups.items(), key=lambda item: str(item[0])):
+        adjoint = schedules.get("adjoint_sctw_p0p5")
+        jvp = schedules.get("transport_jvp_p0p5")
+        if adjoint is None or jvp is None:
+            continue
+        adjoint_error = float(adjoint["integration_error"])
+        jvp_error = float(jvp["integration_error"])
+        relative_difference = abs(adjoint_error - jvp_error) / max(abs(jvp_error), 1e-12)
+        output.append(
+            {
+                "benchmark": benchmark,
+                "source": source,
+                "nfe": nfe,
+                "adjoint_integration_error": adjoint_error,
+                "jvp_integration_error": jvp_error,
+                "relative_difference": relative_difference,
+                "pass_within_5_percent": relative_difference < 0.05,
+            }
+        )
+    return output
+
+
+def reference_convergence(rows):
+    """Check fine-reference self-error against gaps between the three core samplers."""
+    core = {"uniform", "sctw_p0p5", "adjoint_sctw_p0p5"}
+    groups = defaultdict(list)
+    for row in rows:
+        if row.get("schedule") not in core or row.get("integration_error") is None:
+            continue
+        nfe = row.get("nfe", row.get("nfe_budget"))
+        groups[(row["benchmark"], row["source"], int(nfe))].append(row)
+    output = []
+    for (benchmark, source, nfe), values in sorted(groups.items(), key=lambda item: str(item[0])):
+        by_schedule = {row["schedule"]: row for row in values}
+        if set(by_schedule) != core:
+            continue
+        errors = {name: float(by_schedule[name]["integration_error"]) for name in sorted(core)}
+        gaps = [
+            abs(left - right)
+            for index, left in enumerate(errors.values())
+            for right in list(errors.values())[index + 1 :]
+            if abs(left - right) > 1e-12
+        ]
+        reference_errors = {
+            float(row["reference_self_error"])
+            for row in values
+            if row.get("reference_self_error") is not None
+        }
+        if not gaps or len(reference_errors) != 1:
+            continue
+        reference_error = reference_errors.pop()
+        smallest_gap = min(gaps)
+        output.append(
+            {
+                "benchmark": benchmark,
+                "source": source,
+                "nfe": nfe,
+                "comparison_schedules": sorted(core),
+                "reference_self_error": reference_error,
+                "smallest_core_method_gap": smallest_gap,
+                "reference_to_gap_ratio": reference_error / smallest_gap,
+                "pass_below_10_percent": reference_error < 0.1 * smallest_gap,
+            }
+        )
+    return output
+
+
+def _average_ranks(values):
+    values = np.asarray(values, dtype=np.float64)
+    order = np.argsort(values, kind="mergesort")
+    ranks = np.empty(values.size, dtype=np.float64)
+    start = 0
+    while start < values.size:
+        end = start + 1
+        while end < values.size and values[order[end]] == values[order[start]]:
+            end += 1
+        ranks[order[start:end]] = 0.5 * (start + end - 1)
+        start = end
+    return ranks
+
+
+def integration_quality_correlations(rows):
+    """Measure whether accurate learned-ODE integration tracks endpoint quality."""
+    groups = defaultdict(list)
+    for row in rows:
+        if row.get("integration_error") is None:
+            continue
+        nfe = row.get("nfe", row.get("nfe_budget"))
+        if nfe is not None:
+            groups[(row["benchmark"], row.get("source"), int(nfe))].append(row)
+    output = []
+    for (benchmark, source, nfe), values in sorted(groups.items()):
+        metric = next(
+            (key for key in ("fid", "feature_w1", "wasserstein", "rmse") if any(row.get(key) is not None for row in values)),
+            None,
+        )
+        paired = [row for row in values if metric is not None and row.get(metric) is not None]
+        if len(paired) < 3:
+            continue
+        integration = np.asarray([float(row["integration_error"]) for row in paired])
+        quality = np.asarray([float(row[metric]) for row in paired])
+        integration_ranks = _average_ranks(integration)
+        quality_ranks = _average_ranks(quality)
+        pearson = (
+            float(np.corrcoef(integration, quality)[0, 1])
+            if integration.std() > 0.0 and quality.std() > 0.0
+            else None
+        )
+        spearman = (
+            float(np.corrcoef(integration_ranks, quality_ranks)[0, 1])
+            if integration_ranks.std() > 0.0 and quality_ranks.std() > 0.0
+            else None
+        )
+        output.append(
+            {
+                "benchmark": benchmark,
+                "source": source,
+                "nfe": nfe,
+                "quality_metric": metric,
+                "schedule_count": len(paired),
+                "pearson": pearson,
+                "spearman": spearman,
+            }
+        )
+    return output
+
+
+def local_acceleration_consistency(benchmark, source, bundle):
+    """Compare the two consistent discretizations of the continuum acceleration profile."""
+    profiles = bundle.get("profiles", {})
+    if "local" not in profiles or "transport_jvp" not in profiles:
+        return None
+    local = profiles["local"]
+    jvp = profiles["transport_jvp"]
+    local_at_anchors = np.interp(jvp["ts"], local["ts"], local["err"])
+    heun_defect = np.asarray(jvp["local_acceleration"], dtype=np.float64)
+    local_at_anchors = local_at_anchors / max(np.linalg.norm(local_at_anchors), 1e-12)
+    heun_defect = heun_defect / max(np.linalg.norm(heun_defect), 1e-12)
+    return {
+        "benchmark": benchmark,
+        "source": str(source),
+        "normalized_profile_l2": float(np.linalg.norm(local_at_anchors - heun_defect)),
+        "local_estimator": profiles["local"].get("estimator"),
+        "transport_local_estimator": "heun_minus_euler_defect",
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--metrics", action="append", default=[], type=parse_named_path, help="BENCHMARK=metrics.json")
+    parser.add_argument(
+        "--equivalence-metrics",
+        action="append",
+        default=[],
+        type=parse_named_path,
+        help="BENCHMARK=metrics.json used only for estimator agreement and probe stability",
+    )
+    parser.add_argument("--profile", action="append", default=[], type=parse_named_path, help="BENCHMARK=schedule_profiles.json")
+    parser.add_argument("--out-dir", required=True)
+    args = parser.parse_args()
+
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    metric_rows = []
+    runtime_rows = []
+    endpoint_bundles = []
+    for benchmark, path in args.metrics:
+        payload = read_json(path)
+        metric_rows.extend(scalar_rows(payload, benchmark, path))
+        if payload.get("profile_bundle"):
+            endpoint_bundles.append((benchmark, payload["profile_bundle"]))
+        runtime_rows.extend(
+            calibration_rows(
+                payload.get("profile_bundle", {}),
+                benchmark,
+                path,
+                amortization_samples=payload.get("n_samples", payload.get("n_eval")),
+            )
+        )
+    equivalence_metric_rows = []
+    for benchmark, path in args.equivalence_metrics:
+        payload = read_json(path)
+        equivalence_metric_rows.extend(scalar_rows(payload, benchmark, path))
+        runtime_rows.extend(calibration_rows(payload.get("profile_bundle", {}), benchmark, path))
+    equivalence_rows = []
+    local_consistency_rows = []
+    skipped_profiles = []
+    for benchmark, path in args.profile:
+        bundle = read_json(path)
+        runtime_rows.extend(calibration_rows(bundle, benchmark, path))
+        consistency = local_acceleration_consistency(benchmark, path, bundle)
+        if consistency is not None:
+            local_consistency_rows.append(consistency)
+        if "transport_jvp" not in bundle.get("profiles", {}):
+            skipped_profiles.append({"benchmark": benchmark, "path": str(path), "reason": "transport_jvp missing"})
+            continue
+        for row in profile_equivalence_rows(bundle):
+            equivalence_rows.append({"benchmark": benchmark, "source": str(path), **row})
+
+    aggregate = aggregate_rows(metric_rows)
+    equivalence_summary = equivalence_acceptance(equivalence_rows)
+    probe_summary = probe_stability(equivalence_metric_rows)
+    adjoint_jvp_summary = adjoint_jvp_agreement(equivalence_metric_rows)
+    reference_summary = reference_convergence(metric_rows)
+    correlation_summary = integration_quality_correlations(metric_rows)
+    write_csv(out_dir / "endpoint_metrics.csv", metric_rows)
+    write_csv(out_dir / "endpoint_aggregate.csv", aggregate)
+    unique_runtime_rows = list(
+        {
+            (row["benchmark"], row["source"], row["profile"]): row
+            for row in runtime_rows
+        }.values()
+    )
+    write_csv(out_dir / "calibration_runtime.csv", unique_runtime_rows)
+    write_csv(out_dir / "profile_equivalence.csv", equivalence_rows)
+    write_csv(out_dir / "profile_equivalence_acceptance.csv", equivalence_summary)
+    write_csv(out_dir / "probe_stability.csv", probe_summary)
+    write_csv(out_dir / "adjoint_jvp_integration.csv", adjoint_jvp_summary)
+    write_csv(out_dir / "reference_convergence.csv", reference_summary)
+    write_csv(out_dir / "integration_quality_correlation.csv", correlation_summary)
+    write_csv(out_dir / "local_acceleration_consistency.csv", local_consistency_rows)
+    write_core_latex(out_dir / "core_integration_table.tex", aggregate)
+    write_core_quality_latex(out_dir / "core_quality_table.tex", aggregate)
+    write_benchmark_quality_tables(out_dir, aggregate)
+    write_benchmark_integration_tables(out_dir, aggregate)
+    plot_core_integration(out_dir / "core_integration_comparison.png", aggregate)
+    plot_profile_comparison(out_dir / "profile_comparison_nfe20.png", endpoint_bundles)
+    write_json(
+        out_dir / "aggregate.json",
+        {
+            "metric_sources": [{"benchmark": name, "path": str(path)} for name, path in args.metrics],
+            "equivalence_metric_sources": [
+                {"benchmark": name, "path": str(path)} for name, path in args.equivalence_metrics
+            ],
+            "profile_sources": [{"benchmark": name, "path": str(path)} for name, path in args.profile],
+            "skipped_profile_sources": skipped_profiles,
+            "endpoint_rows": metric_rows,
+            "endpoint_aggregate": aggregate,
+            "calibration_runtime": unique_runtime_rows,
+            "profile_equivalence": equivalence_rows,
+            "profile_equivalence_acceptance": equivalence_summary,
+            "probe_stability": probe_summary,
+            "adjoint_jvp_integration": adjoint_jvp_summary,
+            "reference_convergence": reference_summary,
+            "integration_quality_correlation": correlation_summary,
+            "local_acceleration_consistency": local_consistency_rows,
+        },
+    )
+    print(f"Saved aggregate suite outputs to {out_dir}")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,269 @@
+\section{Theory and Method}
+\label{sec:method}
+
+\subsection{Flow matching and the learned ODE}
+\label{sec:flow-matching-background}
+
+In the paired linear-interpolant setting used throughout the low-dimensional and PDE experiments,
+a source point $x_0$ and a target point $x_1$ define the conditional path
+$x_t=(1-t)x_0+t x_1$ with conditional velocity $u=x_1-x_0$. A standard conditional
+flow-matching loss regresses the neural velocity to this conditional velocity at sampled
+intermediate points:
+\begin{equation}
+  \mathcal{L}_{\mathrm{CFM}}(\theta)
+  =
+  \mathbb{E}_{t,x_0,x_1}
+  \left[
+    \left\|v_\theta((1-t)x_0+t x_1,t) - (x_1-x_0)\right\|^2
+  \right].
+  \label{eq:cfm-objective}
+\end{equation}
+After training, the marginal field $v_\theta$ is integrated by a numerical solver. In this draft
+we focus on Euler with a nonuniform grid
+\begin{equation}
+  0=\tau_0 < \tau_1 < \cdots < \tau_K=1,
+  \qquad
+  x_{k+1}=x_k+(\tau_{k+1}-\tau_k)v_\theta(x_k,\tau_k).
+  \label{eq:euler-grid}
+\end{equation}
+
+\subsection{Material derivative and Euler error}
+\label{sec:material-error}
+
+Let $x(t)$ be an exact trajectory of \cref{eq:fm-ode}. Consider one step of length
+$h_i=\tau_{i+1}-\tau_i$, starting at $x_i=x(\tau_i)$. Write $v_i=v_\theta(x_i,\tau_i)$
+for the velocity there and $a_i=\frac{D v_\theta}{D t}(x_i,\tau_i)$ for its rate of change
+along the trajectory, as given by \cref{eq:material-derivative}. Expanding the exact solution
+about $\tau_i$ gives
+\begin{equation}
+  x(\tau_{i+1}) = x_i + h_i v_i + \frac{h_i^2}{2}a_i + O(h_i^3).
+  \label{eq:euler-expansion}
+\end{equation}
+Local truncation error is one source of error in the final sample. As integration proceeds,
+the learned flow can amplify or damp errors introduced by earlier Euler steps. A further source
+is bias in the learned velocity field, which can affect the final sample even when the ODE is
+solved accurately. The material derivative tells us where a given Euler step is likely to incur
+a larger local error and thus where shorter steps may help.
+
+Starting from the same $x_i$, Euler predicts $x_i+h_i v_i$. Subtracting this prediction
+from the exact endpoint in \cref{eq:euler-expansion} gives the local Euler defect
+\begin{equation}
+  d_i
+  :=
+  x(\tau_{i+1}) - (x_i+h_i v_i)
+  =
+  \frac{h_i^2}{2}a_i+O(h_i^3).
+  \label{eq:euler-defect}
+\end{equation}
+For a given step length, $\tfrac12 h_i^2\lVert a_i\rVert$ estimates the magnitude of the
+error introduced by that step. To understand how much this error contributes to the final
+sample, we must also consider how the subsequent flow amplifies or damps a perturbation
+in the direction of the defect.
+
+\subsection{Transporting a local defect to terminal time}
+\label{sec:transported-defect}
+
+Let $\Phi_{s,t}$ denote the flow map of the frozen learned ODE from time $t$ to $s$, and define
+its state tangent
+\begin{equation}
+  M(1,t)=D_x\Phi_{1,t}(x(t)).
+  \label{eq:flow-tangent}
+\end{equation}
+Because $d_i$ is injected at the end of Euler step $i$, its leading effect on the terminal state is
+\begin{equation}
+  d_i^{\mathrm{terminal}}
+  \simeq
+  M(1,\tau_{i+1})d_i
+  \simeq
+  \frac{h_i^2}{2}M(1,\tau_{i+1})a_i.
+  \label{eq:terminal-defect}
+\end{equation}
+We therefore distinguish the local and terminally transported profiles
+\begin{equation}
+  e_i=\lVert a_i\rVert,
+  \qquad
+  q_i=\left\lVert M(1,\tau_{i+1})a_i\right\rVert.
+  \label{eq:transported-profile}
+\end{equation}
+SCTW uses $e_i$. Adjoint-SCTW uses $q_i$. The latter is closely related to goal-oriented or
+dual-weighted residual estimation: a local defect is weighted by the sensitivity of a terminal
+quantity of interest \citep{becker2001optimal}.
+Neither scalar profile is a complete global-error estimator. In particular, separately taking the
+norm of each transported defect discards directional cancellation and nonlinear interactions
+between errors injected at different steps. Adjoint-SCTW should therefore be interpreted as a
+terminal-sensitivity-weighted mesh heuristic, not as an optimizer of the exact endpoint error.
+
+\subsection{Self-curvature probe}
+\label{sec:self-curvature-probe}
+
+SCTW estimates a scalar profile $e(t)$ from the trained model alone. Starting from a small fixed
+set of source samples, we run a fine uniform Euler probe with step size $\delta t$. If $x_i$ is
+the probe state at time $t_i$ and $x_{i+1}$ is the next state, then
+\begin{equation}
+  e(t_i)
+  \approx
+  \frac{
+    \left\|
+      v_\theta(x_{i+1},t_{i+1}) - v_\theta(x_i,t_i)
+    \right\|
+  }{\delta t},
+  \label{eq:self-curvature-estimator}
+\end{equation}
+averaged over probe samples. This is a self-curvature estimate: it measures the learned model's
+own pathwise velocity variation. It requires no oracle coupling, no pressure field, no
+second-order autodifferentiation, and no retraining.
+
+The transported estimators below use the corresponding Heun--Euler defect,
+$2(x_{i+1}^{\mathrm{Heun}}-x_{i+1}^{\mathrm{Euler}})/h^2$, along a fine Heun pilot. Both
+discretizations are consistent estimators of the same continuum material acceleration, but they
+are not numerically identical at finite pilot resolution. We therefore report their normalized
+profile discrepancy in the equivalence tier; terminal-sensitivity gains should not be interpreted
+as arising solely from this small discretization change.
+
+\subsection{Tangent and finite-difference verification estimators}
+\label{sec:transport-estimators}
+
+The action of $M$ on $a_i$ can be evaluated by the tangent-linear model (TLM)
+\begin{equation}
+  \frac{d\,\delta x}{dt}
+  =J_v(x(t),t)\,\delta x,
+  \qquad
+  \delta x(\tau_{i+1})=a_i,
+  \label{eq:tangent-linear-model}
+\end{equation}
+where $J_v=D_xv_\theta$. Our verification implementation differentiates the same discrete Heun
+pilot used for calibration. If one Heun step is
+\begin{equation}
+  \Psi_j(x)
+  =x+\frac{h}{2}\left[
+    v_\theta(x,t_j)
+    +v_\theta\!\left(x+h v_\theta(x,t_j),t_{j+1}\right)
+  \right],
+  \label{eq:discrete-heun-step}
+\end{equation}
+then a Jacobian--vector product (JVP) propagates the perturbation as
+\begin{equation}
+  \delta x_{j+1}=D\Psi_j(x_j)\,\delta x_j.
+  \label{eq:discrete-heun-tangent}
+\end{equation}
+This is exact for the discrete pilot, up to floating-point and autodifferentiation error. A
+centered finite difference provides an independent check along the acceleration direction
+$\widehat a_i=a_i/\lVert a_i\rVert$:
+\begin{equation}
+  q_i
+  \approx
+  \lVert a_i\rVert
+  \frac{\left\lVert
+    \Phi_{1,\tau_{i+1}}(x_{i+1}+\varepsilon\widehat a_i)
+    -\Phi_{1,\tau_{i+1}}(x_{i+1}-\varepsilon\widehat a_i)
+  \right\rVert}{2\varepsilon}.
+  \label{eq:transport-finite-difference}
+\end{equation}
+Finite differences and forward JVPs are useful verification estimators, but each anchor requires a
+separate forward propagation. They are therefore not the image-scale default.
+
+\subsection{Randomized discrete adjoint}
+\label{sec:randomized-adjoint}
+
+For a terminal probe $z$, the state adjoint at a defect insertion time is
+\begin{equation}
+  \lambda_{i+1}=M(1,\tau_{i+1})^\top z.
+  \label{eq:discrete-adjoint}
+\end{equation}
+For a zero-mean isotropic probe with $\mathbb{E}[zz^\top]=I$, the transported norm obeys
+\begin{equation}
+  q_i^2
+  =
+  \mathbb{E}_z\left[
+    \left(a_i^\top\lambda_{i+1}\right)^2
+  \right].
+  \label{eq:randomized-norm-identity}
+\end{equation}
+This is the same randomized projection identity that underlies Hutchinson-style matrix estimators
+\citep{hutchinson1989stochastic}. With $R$ independent Gaussian terminal probes, we use
+\begin{equation}
+  \widehat q_i
+  =
+  \left[
+    \frac{1}{R}\sum_{r=1}^{R}
+    \left(a_i^\top\lambda_{i+1}^{(r)}\right)^2
+  \right]^{1/2}.
+  \label{eq:randomized-adjoint-estimator}
+\end{equation}
+We declare $R=4$ as the scalable default and examine $R\in\{2,4,8\}$ only in the estimator
+equivalence tier. The square root makes $\widehat q_i$ a finite-$R$ biased norm estimator even
+though its square is unbiased; it is consistent as $R$ grows. Probe-seed and $R$ ablations are
+therefore part of the estimator audit rather than hidden tuning. This adjoint is a
+state-sensitivity calculation, not parameter-gradient
+training: $\theta$ is frozen, no loss is differentiated with respect to model parameters, and no
+checkpoint is updated. The connection to adjoint models and neural-ODE adjoints is methodological
+rather than a claim that adjoints are new \citep{errico1997adjoint,chen2018neuralode}.
+
+The implementation first runs a no-gradient Heun pilot and stores its states and local
+accelerations. During each reverse probe, it recomputes one Heun step, applies its vector--Jacobian
+product, and immediately frees that step's graph. Activation memory is therefore independent of
+the number of fine pilot steps; no full Jacobian or state-transition matrix is formed.
+
+\subsection{Equidistributed time mesh}
+\label{sec:mesh-rule}
+
+For either $r(t)=e(t)$ (SCTW) or $r(t)=q(t)$ (Adjoint-SCTW), if the Euler terminal-error proxy is
+$\Delta t_k^2 r(\tau_k)$, then a raw equal-error heuristic would
+place steps so that $\Delta t_k \propto r(\tau_k)^{-1/2}$. Equivalently, knots are quantiles of a
+density proportional to $\sqrt{r(t)}$. In practice, sharp probe profiles and very small NFE make
+this aggressive. We therefore use a tempered density
+\begin{equation}
+  \rho_p(t) = \left(r(t)+\epsilon\right)^p,
+  \qquad p \in \{0.25,0.5\},
+  \label{eq:mesh-density}
+\end{equation}
+and place the $K$ knots by equal cumulative mass:
+\begin{equation}
+  \int_0^{\tau_j} \rho_p(t)\,dt
+  =
+  \frac{j}{K}
+  \int_0^1 \rho_p(t)\,dt,
+  \qquad j=0,\ldots,K.
+  \label{eq:equidistribution}
+\end{equation}
+The exponent $p=0.5$ corresponds to the raw Euler-error rule, while $p=0.25$ is a more conservative
+variant that often behaves better at extremely low NFE.
+
+\subsection{Offline population calibration}
+\label{sec:offline-calibration}
+
+Both methods use a population-average profile calibrated once from source samples disjoint from
+the evaluation priors. The profile, seeds, timing, memory, and all requested NFE grids are cached
+and reused for every metric evaluation. Conditional models bind a balanced set of labels to the
+velocity during calibration. The calibration cost is reported separately from sampling NFE; when
+the same mesh generates $N$ samples, its amortized cost per sample decreases as $1/N$. This design
+preserves rectangular GPU batches and differs from a per-sample adaptive ODE solver.
+
+\subsection{Pressure identity as motivation, not implementation}
+\label{sec:pressure-identity}
+
+The pressure analysis began as a more ambitious attempt to use the exact structure of linear
+interpolant FM. For a linear interpolant, let $u=x_1-x_0$ be the conditional velocity and let
+$p(x,t)$ be the marginal density of $x_t$. The marginal velocity is
+$v(x,t)=\mathbb{E}[u \mid x_t=x]$ and the conditional covariance is
+\begin{equation}
+  \Sigma(x,t)
+  =
+  \operatorname{Cov}[u \mid x_t=x].
+  \label{eq:conditional-covariance}
+\end{equation}
+For this marginal field, the material derivative satisfies the exact momentum-balance identity
+\begin{equation}
+  \frac{D v}{D t}
+  =
+  -\frac{1}{p}\nabla_x \cdot \left(p\,\Sigma\right)
+  =
+  -\nabla_x \cdot \Sigma - \Sigma \nabla_x \log p.
+  \label{eq:pressure-identity}
+\end{equation}
+This identity explains why the marginal velocity can be curved even when every conditional path
+is a straight line: superposed conditional trajectories produce a pressure tensor. It also explains
+why forcing zero acceleration can erase meaningful transport structure. The deployed SCTW sampler
+does not compute \cref{eq:pressure-identity}; it uses the self-probe in
+\cref{eq:self-curvature-estimator}. The pressure identity is the theoretical lens that led us to
+measure material derivative as the local integration difficulty.

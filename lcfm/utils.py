@@ -1,3 +1,4 @@
+import hashlib
 import json
 import platform
 import random
@@ -61,3 +62,11 @@ def write_json(path, payload):
 
 def read_json(path):
     return json.loads(Path(path).read_text())
+
+
+def file_sha256(path, chunk_size=8 * 1024 * 1024):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        while chunk := handle.read(chunk_size):
+            digest.update(chunk)
+    return digest.hexdigest()

@@ -1,0 +1,19 @@
+\begin{abstract}
+Flow matching generates samples by numerically integrating a learned velocity field. At low neural
+function evaluation (NFE) budgets, a uniform Euler mesh can spend steps where the learned flow is
+easy while under-resolving short, difficult intervals. We study two training-free population
+meshes for frozen flow-matching checkpoints. Self-Curvature Time Warping (SCTW) estimates the
+pathwise material acceleration from a fine pilot rollout. Adjoint-SCTW additionally weights each
+local Euler defect by its sensitivity to the terminal state, estimated with four randomized
+discrete-adjoint probes. Both profiles define Euler knots by a declared tempered
+equidistribution rule; neither method retrains the model or uses oracle pressure at inference.
+Across low-dimensional mixtures, a 16-dimensional mixture, staged procedural images, and a hard
+Burgers solution map, the adaptive meshes reduce error to a fine Heun solution of the learned ODE.
+On staged-shapes, Adjoint-SCTW also improves feature Wasserstein distance over uniform Euler,
+SCTW, and every tested fixed Euler mesh at all four NFE budgets. CIFAR-10 is more cautionary:
+SCTW improves FID over uniform Euler at moderate NFE, whereas Adjoint-SCTW's lower integration
+error does not consistently improve FID. This disconnect shows that accurate integration cannot
+correct bias in the learned endpoint distribution. Our claim is therefore narrow: population
+material-acceleration and terminal-sensitivity profiles provide interpretable fixed-NFE meshes,
+with benefits governed by alignment between learned-ODE error and endpoint quality.
+\end{abstract}

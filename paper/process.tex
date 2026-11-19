@@ -1,0 +1,30 @@
+\section{Development Process and Lessons Learned}
+\label{sec:process}
+
+The project began with a broader question: can the pressure identity in
+\cref{eq:pressure-identity} be turned into a training regularizer or coupling rule for low-NFE
+flow matching? Several variants were implemented and tested, including finite-difference
+Lagrangian consistency penalties, Jacobian-vector-product material-derivative penalties,
+directional regularization, pressure-aware minibatch coupling, and Sinkhorn versions of those
+couplings. These studies were useful but did not produce a robust paper-level training method.
+Some variants improved selected two-dimensional benchmarks but failed or became ambiguous on
+higher-dimensional mixtures and CIFAR-like settings.
+
+The main lesson was a separation of roles. Data-side pressure profiles can explain why a problem
+has curved marginal transport, but the object integrated at inference is the learned neural field.
+If the learned field smooths away part of the data-side curvature, an oracle pressure mesh can be
+misaligned with the actual ODE being solved. SCTW therefore schedules from the model's own
+self-curvature profile. This is less ambitious than pressure-aware training, but it is cleaner:
+the method directly asks where the learned ODE is hard for Euler to integrate. Adjoint-SCTW extends
+that question from local difficulty to terminal relevance: a locally large defect may be damped by
+the remaining flow, whereas a smaller defect may be amplified.
+
+This process also shaped the experimental posture. We compare against uniform Euler because it is
+the default low-NFE sampler. We compare against early-, late-, and symmetric-heavy hand meshes
+because fixed nonuniform schedules are simple, strong, and sometimes better than SCTW on a given
+problem. We report integration error to a high-NFE reference when available, because endpoint
+quality can be affected by learned-model bias. The goal is not to hide failures; the goal is to
+understand when a self-curvature mesh is useful. A descriptive cross-schedule correlation audit
+was added for the same reason. It measures, within each fixed checkpoint and NFE, whether lower
+integration error is aligned with the endpoint metric; it is a diagnostic, not an inferential
+test over independently sampled solvers.

@@ -1,0 +1,43 @@
+\section{Oracle Verification of the Pressure Identity}
+\label{sec:appendix-oracle}
+
+The pressure identity in \cref{eq:pressure-identity} is exact for the linear-interpolant marginal
+field. We verified it numerically on a Gaussian-mixture oracle where $p(x,t)$, $v(x,t)$,
+$\Sigma(x,t)$, and the score $\nabla_x \log p(x,t)$ are available in closed form. The verification
+compares two independently computed quantities:
+\begin{align}
+  a_{\mathrm{mat}}(x,t)
+  &=
+  \partial_t v(x,t) + \nabla_x v(x,t)\,v(x,t),
+  \label{eq:oracle-material} \\
+  a_{\mathrm{press}}(x,t)
+  &=
+  -\nabla_x \cdot \Sigma(x,t) - \Sigma(x,t)\nabla_x \log p(x,t).
+  \label{eq:oracle-pressure}
+\end{align}
+The script \verb|scripts/check_momentum_identity.py| evaluates both sides using slow pointwise
+autodifferentiation and also checks the fast batched oracle target used by the experiments. The
+check reports maximum relative identity residual on the order of numerical precision and is used
+as the validation for the exact-oracle appendix.
+
+\begin{table}[h]
+  \centering
+  \caption{Oracle verification checks performed by \texttt{scripts/check\_momentum\_identity.py}.
+  The draft records the qualitative result because the exact printed residual depends on machine
+  precision, but the check threshold is $10^{-8}$.}
+  \label{tab:oracle-verification}
+  \begin{tabular}{p{0.45\linewidth}p{0.35\linewidth}}
+    \toprule
+    Check & Acceptance criterion \\
+    \midrule
+    Material derivative equals pressure source & maximum relative residual below $10^{-8}$ \\
+    Analytic score equals autograd score & maximum error below $10^{-8}$ \\
+    Batched target equals pointwise target & maximum error below $10^{-8}$ \\
+    Oracle target is unchanged under \texttt{no\_grad} & exact agreement \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+This oracle experiment does not prove that SCTW is optimal. Its role is narrower: it verifies the
+mechanistic identity that motivated the material-derivative viewpoint. The practical sampler then
+uses the learned model's self-curvature profile, not the oracle pressure field.

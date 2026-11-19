@@ -3,7 +3,7 @@
 ## Current Status
 
 This file is the detailed experiment record for the sampler-side direction. The active paper
-candidate extracted from it is **Self-Curvature Time Warping (SCTW)**. Later pressure-training
+candidate extracted from it is **SCTW and Adjoint-SCTW**. Later pressure-training
 and pressure-coupling notes in this file should be read as history/diagnostics, not as the current
 main method.
 
@@ -113,11 +113,14 @@ Findings:
    fixed NFE (fan: 0.038 vs 0.540 uniform Euler-6) — the cold coupling is simply easier to
    integrate; warping then matters little (gain 1.03 on fan-OT).
 
-## Working Sampler Method: Self-Curvature Time Warping
+## Working Sampler Methods: SCTW and Adjoint-SCTW
 
-The current sampler-side method of record is **Self-Curvature Time Warping** (SCTW). It is
-training-free and oracle-free: a trained CFM velocity field is probed along its own rollout, and
-Euler steps are placed according to the model's self-reported material-derivative magnitude.
+The current sampler-side methods are **Self-Curvature Time Warping** (SCTW) and
+**Adjoint-SCTW**. Both are training-free and oracle-free. SCTW uses the model's self-reported
+material-derivative magnitude; Adjoint-SCTW weights the corresponding local Euler defect by
+randomized terminal-state sensitivity. The settings immediately below document the earlier
+SCTW-only study. The shared paper protocol in plan.md supersedes them with 100 image pilots,
+declared powers 0.25 and 0.5, and four adjoint probes.
 
 Default settings for image-scale checks:
 
@@ -156,14 +159,15 @@ The main revisited experiments now give a positive but not overclaimable picture
   plausibly integration quality rather than label drift.
 - **Unconditional CIFAR-10:** SCTW improves FID over uniform at NFE 10/20/50 on the large
   Sinkhorn-OT EMA checkpoint. NFE 5 remains brittle for aggressive warping.
-- **Staged-shapes easy:** SCTW strongly improves over uniform, but a simple tuned early hand
-  schedule is still better. This is the key caution against claiming schedule dominance.
+- **Staged-shapes easy:** SCTW strongly improves over uniform. Adjoint-SCTW further improves
+  feature W1 and beats every tested fixed Euler mesh at all four NFE budgets on the evaluated
+  checkpoint.
 - **GM16 and low-dimensional visual checks:** GM16, `five_modes`, and `fan_modes` support the
   low-NFE advantage; `spiral` is mixed and should be presented as a caveat or diagnostic case.
 
-Working claim: SCTW is a cheap, model-adaptive schedule that often improves low-NFE Euler and
-gives interpretable time-allocation diagnostics. It is not yet evidence that learned
-self-curvature schedules universally beat tuned hand schedules.
+Working claim: local material acceleration is a practical population mesh signal, and terminal
+sensitivity can sharpen it when learned-ODE integration error is aligned with endpoint quality.
+The CIFAR results show that this alignment cannot be assumed.
 
 ## X1: the gain law
 

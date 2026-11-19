@@ -1,0 +1,47 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage{cleveref}
+
+\makeatletter
+\newcommand{\safeincludegraphics}[2][]{%
+  \begingroup
+  \edef\@imgfile{\detokenize{#2}}%
+  \IfFileExists{\@imgfile}{\includegraphics[#1]{\@imgfile}}{%
+    \fbox{\parbox{0.9\linewidth}{Missing figure: \@imgfile}}%
+  }%
+  \endgroup
+}
+\makeatother
+
+\title{Self-Curvature and Adjoint Time Warping for Fixed-NFE Flow Matching}
+\author{Draft}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\input{abstract}
+\input{introduction}
+\input{method}
+\input{process}
+\input{experiments}
+\input{results}
+\input{conclusions}
+\input{data_availability}
+\input{acknowledgments}
+
+\bibliographystyle{plainnat}
+\bibliography{Bib/references}
+
+\appendix
+\input{appendix_oracle}
+
+\end{document}

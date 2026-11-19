@@ -1,0 +1,23 @@
+\section{Conclusion}
+\label{sec:conclusion}
+
+We presented SCTW and Adjoint-SCTW, two training-free population meshes for Euler sampling of
+frozen flow-matching models. SCTW estimates the local material acceleration along a fine pilot.
+Adjoint-SCTW further weights that defect by terminal-state sensitivity using a constant-memory
+randomized discrete adjoint. Both then place knots by a declared tempered equidistribution rule.
+
+The strongest evidence is staged-shapes, where Adjoint-SCTW improves both learned-ODE integration
+and endpoint feature W1 over SCTW, uniform Euler, and every tested fixed Euler mesh at each NFE.
+The same terminal weighting substantially reduces learned-ODE integration error on GM16 and hard
+Burgers. The CIFAR result defines the boundary: SCTW improves FID at moderate NFE, but
+Adjoint-SCTW's more accurate integration does not consistently improve FID. Across schedules,
+integration error and endpoint quality are nearly rank-aligned on staged-shapes and weakly or
+negatively aligned on CIFAR at moderate and high NFE. A sampler cannot remove endpoint bias in the
+learned vector field, and discretization error can sometimes cancel part of that bias.
+
+The methods are therefore best understood as interpretable mesh diagnostics, not universally
+optimal solvers. The remaining limitations are concrete: one population mesh may hide
+sample-specific stiffness; separately norming transported defects ignores cancellation across
+steps; randomized calibration adds an offline cost; and the tempering exponent remains declared
+rather than derived. Multi-checkpoint image studies and comparisons with learned solver schedules
+are needed before making broader generative-quality claims.

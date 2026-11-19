@@ -13,9 +13,17 @@ from lcfm import datasets  # noqa: F401
 from lcfm.metrics import mean_path_length, mode_statistics, path_length_ratio, trajectory_acceleration, wasserstein_match
 from lcfm.models import build_model
 from lcfm.registry import DATASETS, get
-from lcfm.schedules import equal_error_grid, euler_on_grid, kappa, power_time_grid, rollout_error_profile
-from lcfm.solvers import solve
-from lcfm.utils import read_json, set_seed, write_json
+from lcfm.schedules import (
+    calibrate_schedule_profiles,
+    euler_defect_cost_matrix,
+    estimator_schedule_specs_from_bundle,
+    euler_on_grid,
+    heun_on_grid,
+    optimal_defect_grid,
+    schedule_specs_from_bundle,
+    validate_profile_bundle,
+)
+from lcfm.utils import file_sha256, read_json, set_seed, write_json
 
 
 def parse_ints(text):
@@ -44,37 +52,49 @@ def maybe_mode_metrics(problem, samples, hit_radius):
     return mode_statistics(samples, problem.centers(samples.device), hit_radius=hit_radius)
 
 
-def evaluate_samples(model, problem, x0, target, schedule, nfe, grid, hit_radius):
-    if grid is None:
-        traj = solve("euler", model, x0, {"steps": int(nfe)})
-    else:
-        traj = euler_on_grid(model, x0, grid)
+def evaluate_samples(model, problem, x0, target, spec, nfe, hit_radius, reference_endpoint):
+    solver = spec.get("solver", "euler")
+    traj = heun_on_grid(model, x0, spec["grid"]) if solver == "heun" else euler_on_grid(model, x0, spec["grid"])
     samples = traj[-1]
     metrics = {
-        "schedule": schedule,
+        "schedule": spec["schedule"],
         "nfe": int(nfe),
+        "nfe_used": int(spec["nfe_used"]),
         "wasserstein": wasserstein_match(samples, target),
         "wasserstein2": wasserstein_match(samples, target, p=2),
+        "integration_error": float((samples - reference_endpoint).norm(dim=1).mean().item()),
         "mean_path_length": mean_path_length(traj),
         "path_length_ratio": path_length_ratio(traj),
         "trajectory_acceleration": trajectory_acceleration(traj),
-        "time_grid": grid,
+        "time_grid": spec["grid"],
     }
     metrics.update(maybe_mode_metrics(problem, samples, hit_radius))
     return {"samples": samples, "traj": traj, "metrics": metrics}
 
 
-def plot_summary(out_path, problem_name, profile, rows, samples_by_name, x0, target, nfe_for_points):
+def plot_summary(out_path, problem_name, bundle, rows, samples_by_name, x0, target, nfe_for_points):
     fig, axes = plt.subplots(2, 3, figsize=(14, 8.5))
+    profile = bundle["profiles"]["local"]
     ts = torch.tensor(profile["ts"])
     err = torch.tensor(profile["err"])
     err_norm = err / err.max().clamp_min(1e-12)
     rho025 = (err + 1e-3).pow(0.25)
     rho05 = (err + 1e-3).pow(0.5)
-    axes[0, 0].plot(ts, err_norm, color="#222222", lw=2.2, label="E1 profile")
+    axes[0, 0].plot(ts, err_norm, color="#222222", lw=2.2, label="SCTW local profile")
+    adjoint = bundle["profiles"].get("transport_adjoint_r4")
+    if adjoint is not None:
+        adjoint_ts = torch.tensor(adjoint["ts"])
+        adjoint_err = torch.tensor(adjoint["err"])
+        axes[0, 0].plot(
+            adjoint_ts,
+            adjoint_err / adjoint_err.max().clamp_min(1e-12),
+            color="#b2182b",
+            lw=2.0,
+            label="Adjoint profile",
+        )
     axes[0, 0].plot(ts, rho025 / rho025.max().clamp_min(1e-12), color="#2b7bba", ls="--", label="density p=0.25")
     axes[0, 0].plot(ts, rho05 / rho05.max().clamp_min(1e-12), color="#1b9e77", ls=":", label="density p=0.5")
-    axes[0, 0].set_title(f"E1 profile, kappa={profile['kappa']:.2f}")
+    axes[0, 0].set_title(f"Local profile, kappa={profile['kappa']:.2f}")
     axes[0, 0].set_xlabel("t")
     axes[0, 0].set_ylabel("normalized value")
     axes[0, 0].grid(True, alpha=0.25)
@@ -131,14 +151,29 @@ def main():
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--n-samples", type=int, default=1000)
     parser.add_argument("--nfe-values", default="5,10,20,50")
-    parser.add_argument("--profile-samples", type=int, default=1000)
+    parser.add_argument("--profile-samples", type=int, default=512)
     parser.add_argument("--profile-fine-steps", type=int, default=50)
+    parser.add_argument("--profile-anchor-count", type=int, default=16)
+    parser.add_argument("--profile-estimators", default="local,transport_adjoint")
+    parser.add_argument("--equivalence-profiles", default="")
+    parser.add_argument("--equivalence-powers", default="0.5")
+    parser.add_argument("--profile-cache")
+    parser.add_argument("--pilot-seed", type=int, default=1311)
+    parser.add_argument("--adjoint-probes", default="4")
+    parser.add_argument("--adjoint-seed", type=int, default=2718)
+    parser.add_argument("--transport-perturbations", default="0.001,0.003")
     parser.add_argument("--warp-powers", default="0.25,0.5")
     parser.add_argument("--warp-floor", type=float, default=1e-3)
     parser.add_argument("--power-rhos", default="2,3")
     parser.add_argument("--power-kinds", default="early,late,symmetric")
     parser.add_argument("--hit-radius", type=float)
     parser.add_argument("--eval-seed", type=int, default=1234)
+    parser.add_argument("--methods", default="uniform,sctw,adjoint_sctw,power,vsfm,heun")
+    parser.add_argument("--reference-intervals", type=int, default=1000)
+    parser.add_argument("--reference-check-intervals", type=int, default=2000)
+    parser.add_argument("--include-boss", action="store_true")
+    parser.add_argument("--boss-anchor-steps", type=int, default=100)
+    parser.add_argument("--boss-reference-solver", choices=("euler", "heun"), default="heun")
     parser.add_argument("--plot-nfe", type=int, default=20)
     parser.add_argument("--out-dir")
     args = parser.parse_args()
@@ -160,17 +195,70 @@ def main():
     out_dir = Path(args.out_dir) if args.out_dir else run_dir / "eval_sctw_schedules"
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    nfe_values = parse_ints(args.nfe_values)
+    warp_powers = parse_floats(args.warp_powers)
+    set_seed(args.pilot_seed)
+    profile_x0 = problem.eval_initial(args.profile_samples, device)
+    profile_cache = Path(args.profile_cache) if args.profile_cache else out_dir / "schedule_profiles.json"
+    profile_context = {
+        "dataset": config["dataset"],
+        "checkpoint": args.checkpoint,
+        "checkpoint_sha256": file_sha256(run_dir / args.checkpoint),
+    }
+    if profile_cache.is_file():
+        bundle = read_json(profile_cache)
+        validate_profile_bundle(
+            bundle,
+            profile_context,
+            {
+                "pilot_seed": args.pilot_seed,
+                "pilot_samples": args.profile_samples,
+                "fine_steps": args.profile_fine_steps,
+                "anchor_count": args.profile_anchor_count,
+                "adjoint_probe_counts": parse_ints(args.adjoint_probes),
+                "adjoint_seed": args.adjoint_seed,
+                "perturbations": parse_floats(args.transport_perturbations),
+                "floor": args.warp_floor,
+                "powers": warp_powers,
+                "nfe_values": nfe_values,
+            },
+        )
+    else:
+        bundle = calibrate_schedule_profiles(
+            [(model, profile_x0)],
+            estimators=parse_names(args.profile_estimators),
+            fine_steps=args.profile_fine_steps,
+            anchor_count=args.profile_anchor_count,
+            adjoint_probe_counts=parse_ints(args.adjoint_probes),
+            adjoint_seed=args.adjoint_seed,
+            perturbations=parse_floats(args.transport_perturbations),
+            floor=args.warp_floor,
+            powers=warp_powers,
+            nfe_values=nfe_values,
+            pilot_seed=args.pilot_seed,
+            context=profile_context,
+        )
+        write_json(profile_cache, bundle)
+    boss_data = None
+    if args.include_boss:
+        boss_anchor_grid, boss_costs = euler_defect_cost_matrix(
+            model,
+            profile_x0,
+            anchor_steps=args.boss_anchor_steps,
+            reference_solver=args.boss_reference_solver,
+        )
+        boss_data = (boss_anchor_grid, boss_costs)
     set_seed(args.eval_seed)
     x0 = problem.eval_initial(args.n_samples, device)
     target = problem.target_eval(args.n_samples, device)
-    profile_x0 = problem.eval_initial(args.profile_samples, device)
-    ts, err = rollout_error_profile(model, profile_x0, fine_steps=args.profile_fine_steps)
-    profile = {
-        "ts": [float(x) for x in ts.tolist()],
-        "err": [float(x) for x in err.tolist()],
-        "kappa": kappa(ts, err, floor=args.warp_floor),
-    }
-    write_json(out_dir / "e1_profile.json", profile)
+    reference_grid = [float(value) for value in torch.linspace(0.0, 1.0, args.reference_intervals + 1)]
+    reference_endpoint = heun_on_grid(model, x0, reference_grid)[-1]
+    check_endpoint = heun_on_grid(
+        model,
+        x0,
+        [float(value) for value in torch.linspace(0.0, 1.0, args.reference_check_intervals + 1)],
+    )[-1]
+    reference_self_error = float((reference_endpoint - check_endpoint).norm(dim=1).mean().item())
     write_json(
         out_dir / "eval_config.json",
         {
@@ -178,45 +266,64 @@ def main():
             "checkpoint": args.checkpoint,
             "dataset": config["dataset"],
             "n_samples": args.n_samples,
-            "nfe_values": parse_ints(args.nfe_values),
-            "warp_powers": parse_floats(args.warp_powers),
+            "nfe_values": nfe_values,
+            "methods": parse_names(args.methods),
+            "equivalence_profiles": parse_names(args.equivalence_profiles),
+            "equivalence_powers": parse_floats(args.equivalence_powers),
+            "warp_powers": warp_powers,
             "power_rhos": parse_floats(args.power_rhos),
             "power_kinds": parse_names(args.power_kinds),
             "hit_radius": hit_radius,
             "eval_seed": args.eval_seed,
+            "pilot_seed": args.pilot_seed,
+            "profile_cache": str(profile_cache),
+            "reference_intervals": args.reference_intervals,
+            "reference_check_intervals": args.reference_check_intervals,
+            "reference_self_error": reference_self_error,
+            "include_boss": args.include_boss,
+            "boss_anchor_steps": args.boss_anchor_steps,
+            "boss_reference_solver": args.boss_reference_solver,
         },
     )
 
     rows = []
     results = {}
     samples_by_name = {}
-    for nfe in parse_ints(args.nfe_values):
-        specs = [{"sample_name": f"uniform_nfe_{nfe}", "schedule": "uniform", "grid": None}]
-        for power in parse_floats(args.warp_powers):
+    for nfe in nfe_values:
+        specs = schedule_specs_from_bundle(
+            bundle,
+            nfe,
+            methods=parse_names(args.methods),
+            powers=warp_powers,
+            power_rhos=parse_floats(args.power_rhos),
+            power_kinds=parse_names(args.power_kinds),
+            adjoint_probes=4,
+        )
+        if parse_names(args.equivalence_profiles):
+            specs += estimator_schedule_specs_from_bundle(
+                bundle,
+                nfe,
+                parse_names(args.equivalence_profiles),
+                powers=parse_floats(args.equivalence_powers),
+            )
+        if boss_data is not None:
+            boss_grid, boss_objective = optimal_defect_grid(boss_data[1], boss_data[0], nfe)
             specs.append(
                 {
-                    "sample_name": f"e1_warped_p{rho_tag(power)}_nfe_{nfe}",
-                    "schedule": "e1_warped",
-                    "grid": equal_error_grid(profile["ts"], profile["err"], nfe, power=power, floor=args.warp_floor, end=1.0),
-                    "warp_power": power,
+                    "schedule": "boss_dp",
+                    "grid": boss_grid,
+                    "solver": "euler",
+                    "nfe_used": nfe,
+                    "pilot_objective": boss_objective,
                 }
             )
-        for kind in parse_names(args.power_kinds):
-            for rho in parse_floats(args.power_rhos):
-                specs.append(
-                    {
-                        "sample_name": f"power_{kind}_rho{rho_tag(rho)}_nfe_{nfe}",
-                        "schedule": f"power_{kind}",
-                        "grid": power_time_grid(nfe, rho=rho, kind=kind),
-                        "power_kind": kind,
-                        "power_rho": rho,
-                    }
-                )
         for spec in specs:
-            eval_result = evaluate_samples(model, problem, x0, target, spec["schedule"], nfe, spec["grid"], hit_radius)
+            spec["sample_name"] = f"{spec['schedule']}_nfe_{nfe}"
+            eval_result = evaluate_samples(model, problem, x0, target, spec, nfe, hit_radius, reference_endpoint)
             metrics = eval_result["metrics"]
             metrics["sample_name"] = spec["sample_name"]
-            for key in ["warp_power", "power_kind", "power_rho"]:
+            metrics["reference_self_error"] = reference_self_error
+            for key in ["warp_power", "profile", "pilot_objective"]:
                 if key in spec:
                     metrics[key] = spec[key]
             results[spec["sample_name"]] = metrics
@@ -230,8 +337,26 @@ def main():
         writer.writeheader()
         for row in rows:
             writer.writerow({key: value for key, value in row.items() if key not in {"time_grid", "mode_hit_probs"}})
-    write_json(out_dir / "metrics.json", {"run_dir": str(run_dir), "checkpoint": args.checkpoint, "e1_profile": profile, "results": results})
-    plot_summary(out_dir / "schedule_diagnostic.png", profile=profile, rows=rows, samples_by_name=samples_by_name, x0=x0.detach().cpu(), target=target.detach().cpu(), nfe_for_points=args.plot_nfe, problem_name=config["dataset"])
+    write_json(
+        out_dir / "metrics.json",
+        {
+            "run_dir": str(run_dir),
+            "checkpoint": args.checkpoint,
+            "n_samples": args.n_samples,
+            "profile_bundle": bundle,
+            "results": results,
+        },
+    )
+    plot_summary(
+        out_dir / "schedule_diagnostic.png",
+        bundle=bundle,
+        rows=rows,
+        samples_by_name=samples_by_name,
+        x0=x0.detach().cpu(),
+        target=target.detach().cpu(),
+        nfe_for_points=args.plot_nfe,
+        problem_name=config["dataset"],
+    )
     print(f"Saved low-dimensional schedule evaluation to {out_dir}")
 
 

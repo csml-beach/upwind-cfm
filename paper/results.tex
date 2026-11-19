@@ -1,0 +1,228 @@
+\section{Results}
+\label{sec:results}
+
+\subsection{Estimator verification}
+\label{sec:estimator-results}
+
+The local equivalence tier first asks whether the scalable randomized adjoint estimates the same
+transported-defect profile as exact discrete-Heun JVP propagation. With $R=4$, normalized profile
+error remains below the declared 10\% threshold on five modes, fan modes, spiral, GM16 seed 0, and
+hard Burgers. The resulting integration error remains within 5\% of the JVP schedule, and varying
+the adjoint seed among 7, 2718, and 31415 changes endpoint integration error by less than 5\%.
+These checks support the estimator, not the optimality of the resulting mesh.
+
+The staged-shapes image pilot is a useful stress test of that conclusion. Its $R=4$ adjoint
+profile differs from JVP by only $0.020\%$ in normalized L2, and the resulting integration error
+differs by at most $1.47\%$ across the four NFE budgets. Nevertheless, the maximum knot
+displacement is 0.034, above the declared 0.02 gate, because the profile is sharply concentrated
+near zero and small profile perturbations shift cumulative-density quantiles. Probe-seed variation
+passes at NFE 5, 10, and 50 but reaches $5.06\%$ at NFE 20, narrowly missing the 5\% gate. We
+retain both failures: randomized adjoints estimate the transported profile accurately here, but
+mesh inversion can amplify small errors and should be stabilized in future implementations.
+
+Both CIFAR-10 pilots pass all declared estimator gates. For conditional and unconditional models,
+respectively, the $R=4$ profile errors are 1.56\% and 1.17\%, and maximum knot displacements are
+0.0066 and 0.0082. Their integration errors differ from exact JVP schedules by at most 0.30\%,
+while variation over the three probe seeds remains below 0.70\%. The finite-difference profiles
+also pass both perturbation checks. Thus the negative CIFAR endpoint result below is not explained
+by a failed randomized estimator or unstable knot construction.
+
+Calibration cost is reported outside sampling NFE. On the A100 used for image evaluation, the
+local CIFAR profile takes approximately 15 seconds; the four-probe adjoint profile takes 246--255
+seconds and peaks below 0.85 GB of allocated GPU memory. Amortized over the reported 5000 samples,
+the latter is about 0.05 seconds per sample. This cost is paid once per checkpoint and conditioning
+protocol, so the method is most appropriate when the resulting population mesh is reused. Exact
+JVP calibration takes approximately 1772--1779 seconds on the same pilots, about seven times the
+$R=4$ adjoint cost.
+
+Centered finite differences agree with JVP at the declared perturbations on fan, spiral, GM16, and
+Burgers. Five modes is a retained failure: $\varepsilon\in\{10^{-3},3\times10^{-3}\}$ lies outside
+the local linear regime and produces normalized profile errors of 14.1\% and 27.6\%. A separate
+convergence audit reaches 0.23\% at $\varepsilon=10^{-4}$ before float32 cancellation becomes
+visible. Staged-shapes exposes the complementary issue: $\varepsilon=10^{-3}$ gives 0.92\%
+profile error, yet a 0.123 maximum knot displacement, while
+$3\times10^{-3}$ fails both profile and knot gates. We do not replace either declared result with
+a favorable post-hoc perturbation.
+
+\begin{figure}[t]
+  \centering
+  \safeincludegraphics[width=\linewidth]{../results/sctw_adjoint_suite/aggregate/profile_comparison_nfe20.png}
+  \caption{Population SCTW and Adjoint-SCTW profiles. Each curve is normalized to unit integral;
+  colored rugs show the corresponding $p=0.5$, NFE-20 knots. Terminal sensitivity can amplify
+  early defects, as in Burgers and staged-shapes, or damp a sharp local endpoint profile, as in
+  conditional CIFAR-10.}
+  \label{fig:profile-comparison}
+\end{figure}
+
+\subsection{When integration accuracy predicts endpoint quality}
+\label{sec:alignment-results}
+
+We measure learned-ODE integration error against the declared fine Heun reference and separately
+measure endpoint quality. Their relationship is benchmark dependent. Across the 14 common
+schedules, staged-shapes feature W1 and integration error are almost perfectly rank-aligned:
+Spearman correlation ranges from 0.969 to 0.996 across the four NFE budgets. Conditional CIFAR-10
+is weakly or negatively aligned from NFE 10 onward, reaching $-0.604$ at NFE 50; unconditional
+CIFAR-10 is near zero at NFE 20 and $-0.110$ at NFE 50. These are descriptive within-checkpoint
+correlations, not significance tests over independent solvers. They nevertheless identify an
+important boundary: better numerical integration helps endpoint quality when the fine learned-ODE
+endpoint is itself aligned with the data metric, but cannot correct a biased learned field.
+
+\subsection{Staged-shapes}
+\label{sec:staged-results}
+
+\begin{table}[t]
+  \centering
+  \caption{Staged-shapes easy benchmark; feature W1 is lower better. Best fixed is the
+  post-hoc minimum over the six early/late/symmetric power meshes and two fixed VSFM meshes at each
+  NFE, so it is a deliberately favorable comparator rather than one deployable preselected mesh.}
+  \label{tab:staged}
+  \resizebox{\linewidth}{!}{%
+    \input{../results/sctw_adjoint_suite/aggregate/quality_staged_shapes.tex}%
+  }
+\end{table}
+
+\begin{figure}[t]
+  \centering
+  \begin{subfigure}{0.31\linewidth}
+    \centering
+    \safeincludegraphics[width=\linewidth]{../results/sctw_adjoint_suite/remote/staged_shapes/samples/uniform_nfe_5.png}
+    \caption{Uniform Euler.}
+  \end{subfigure}
+  \begin{subfigure}{0.31\linewidth}
+    \centering
+    \safeincludegraphics[width=\linewidth]{../results/sctw_adjoint_suite/remote/staged_shapes/samples/power_early_rho3_nfe_5.png}
+    \caption{Best fixed mesh.}
+  \end{subfigure}
+  \begin{subfigure}{0.31\linewidth}
+    \centering
+    \safeincludegraphics[width=\linewidth]{../results/sctw_adjoint_suite/remote/staged_shapes/samples/adjoint_sctw_p0p5_nfe_5.png}
+    \caption{Adjoint-SCTW.}
+  \end{subfigure}
+  \caption{Fixed-prior NFE-5 staged-shapes samples. Adjoint-SCTW removes more incomplete and
+  ambiguous shapes than uniform Euler and slightly improves over the strongest fixed mesh.}
+  \label{fig:staged-samples}
+\end{figure}
+
+Staged-shapes is the clearest positive endpoint result. At NFE 5, feature W1 falls from 1.524 for
+uniform Euler to 1.017 for SCTW and 0.870 for Adjoint-SCTW; mode hit rate rises from 81.3\% to
+94.4\% and 97.4\%, respectively. Adjoint-SCTW also beats the post-hoc best fixed mesh at every NFE.
+The corresponding integration error falls from 7.750 to 5.039 and 3.589, so the endpoint and
+learned-ODE metrics tell the same story.
+
+\subsection{Low-dimensional mixtures and GM16}
+\label{sec:lowdim-results}
+
+\begin{figure}[t]
+  \centering
+  \begin{subfigure}{0.31\linewidth}
+    \centering
+    \safeincludegraphics[width=\linewidth]{../results/lowdim_sctw_complementary/formative_panels/five_modes_diagnostic_nfe20.png}
+    \caption{Five modes.}
+  \end{subfigure}
+  \begin{subfigure}{0.31\linewidth}
+    \centering
+    \safeincludegraphics[width=\linewidth]{../results/lowdim_sctw_complementary/formative_panels/fan_modes_diagnostic_nfe20.png}
+    \caption{Fan modes.}
+  \end{subfigure}
+  \begin{subfigure}{0.31\linewidth}
+    \centering
+    \safeincludegraphics[width=\linewidth]{../results/lowdim_sctw_complementary/formative_panels/spiral_diagnostic_nfe20.png}
+    \caption{Spiral.}
+  \end{subfigure}
+  \caption{Visual low-dimensional transports. These panels expose the target geometry and knot
+  allocation; the quantitative comparison uses fixed priors and the tightened matching metrics.}
+  \label{fig:lowdim-panels}
+\end{figure}
+
+\begin{table}[t]
+  \centering
+  \caption{GM16 endpoint W1, averaged over three independently trained checkpoints. Lower is
+  better. The table reports both declared tempering powers and the post-hoc best fixed comparator.}
+  \label{tab:gm16}
+  \resizebox{\linewidth}{!}{%
+    \input{../results/sctw_adjoint_suite/aggregate/quality_gm16.tex}%
+  }
+\end{table}
+
+At NFE 5, learned-ODE integration error is 0.460/0.364/0.372 for
+uniform/SCTW/Adjoint-SCTW on five modes, 0.638/0.514/0.479 on fan modes, and
+0.275/0.260/0.255 on spiral. Thus terminal sensitivity is not uniformly beneficial: SCTW remains
+slightly better on five modes, while Adjoint-SCTW improves fan and spiral. GM16 is stronger and
+replicated: the three-seed NFE-5 integration error is
+$0.527\pm0.012$, $0.263\pm0.009$, and $0.237\pm0.009$, with corresponding endpoint W1
+1.257, 1.143, and 1.128.
+
+\subsection{Hard Burgers solution map}
+\label{sec:burgers-results}
+
+\begin{figure}[t]
+  \centering
+  \safeincludegraphics[width=0.92\linewidth]{../results/burgers_solution_map_dedalus_rich/burgers_data_breadth_examples.png}
+  \caption{Examples from the rich one-dimensional Burgers solution-map cache. Gray curves are
+  initial conditions and blue curves are final PDE reference solutions.}
+  \label{fig:burgers-data}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \safeincludegraphics[width=0.92\linewidth]{../results/burgers_solution_map_dedalus_rich/burgers_solution_map_dedalus_rich_h256_seed42/eval_sctw_schedules_ema/profile_diagnostic_nfe20.png}
+  \caption{Hard Burgers local-profile diagnostic. The newer transported-profile comparison is
+  included in \cref{fig:profile-comparison}; this earlier figure retains the solution trajectories
+  and endpoint metrics.}
+  \label{fig:burgers-diagnostic}
+\end{figure}
+
+\begin{table}[t]
+  \centering
+  \caption{Hard Burgers integration error to Heun-1000 for the learned ODE; lower is better.}
+  \label{tab:burgers-integration}
+  \input{../results/sctw_adjoint_suite/aggregate/integration_burgers.tex}
+\end{table}
+
+Adjoint-SCTW gives the largest integration gain on Burgers: at NFE 5 the error falls from 1.756
+for uniform Euler and 1.673 for SCTW to 1.250, and at NFE 50 it falls to 0.179. Endpoint PDE RMSE,
+however, changes only from 0.357 to 0.350 at NFE 5 and is essentially unchanged at higher NFE.
+The method integrates the learned ODE more accurately; it does not correct the learned
+initial-to-final map.
+
+\subsection{CIFAR-10}
+\label{sec:cifar-results}
+
+\begin{table}[t]
+  \centering
+  \caption{Conditional CIFAR-10 minibatch-OT checkpoint, EMA evaluation with 5000 fixed-prior
+  samples. FID is lower better. Results are descriptive for one checkpoint and evaluation seed.}
+  \label{tab:cifar-conditional}
+  \resizebox{\linewidth}{!}{%
+    \input{../results/sctw_adjoint_suite/aggregate/quality_cifar10_conditional.tex}%
+  }
+\end{table}
+
+\begin{table}[t]
+  \centering
+  \caption{Unconditional CIFAR-10 Sinkhorn checkpoint under the same 5000-sample protocol.
+  FID is lower better; best fixed has the same post-hoc definition as in \cref{tab:staged}.}
+  \label{tab:cifar-unconditional}
+  \resizebox{\linewidth}{!}{%
+    \input{../results/sctw_adjoint_suite/aggregate/quality_cifar10_unconditional.tex}%
+  }
+\end{table}
+
+SCTW improves FID over uniform Euler at NFE 10, 20, and 50 for both checkpoints. At NFE 5,
+tempering matters: $p=0.25$ is slightly better than uniform for conditional CIFAR but neither SCTW
+power improves unconditional FID. Adjoint-SCTW consistently lowers learned-ODE integration error
+but generally trails SCTW in FID. For conditional CIFAR at NFE 20, integration error is
+3.271/3.415/2.662 for uniform/SCTW/Adjoint-SCTW, whereas FID is 23.158/21.391/22.113.
+This is a useful negative result for the stronger premise that terminally accurate integration
+must improve generative quality.
+
+\subsection{Summary of evidence}
+\label{sec:summary-evidence}
+
+Adjoint-SCTW satisfies the stated decision rule: it improves or closely matches SCTW's integration
+error on most benchmark families and closes the fixed-mesh gap on the non-Burgers staged-shapes
+problem. The result does not justify a universal sampler claim. SCTW is more reliable for CIFAR
+FID, and five modes provides a small case where terminal weighting is unnecessary. The combined
+evidence supports two distinct claims: local material acceleration is a practical population mesh
+signal, and terminal sensitivity can sharpen that signal when numerical integration error is
+aligned with the endpoint task.

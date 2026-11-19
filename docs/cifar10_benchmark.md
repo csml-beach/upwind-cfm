@@ -78,12 +78,16 @@ python scripts/evaluate_cifar10_checkpoint.py \
   --data-root data \
   --classifier-checkpoint data/classifiers/cifar10_resnet18.pt \
   --n-samples 5000 \
+  --reference-split train \
   --nfe-values 5,10,20,50
 ```
 
 The evaluator uses fixed Gaussian initial samples and balanced labels cycling
-through CIFAR classes. It reports global FID/KID from pretrained Inception
-features and conditional classifier accuracy from a CIFAR-10 classifier.
+through CIFAR classes. It reports global FID/KID against CIFAR-10 train images
+using pretrained Inception features and conditional classifier accuracy from a
+CIFAR-10 classifier. Real Inception features are cached once and reused across
+all samplers; fake features are extracted once per sample set. KID uses the same
+declared subset seed for every method so subset Monte Carlo noise is paired.
 
 Metric assets are DVC-tracked under `artifacts/cifar10_metrics/`:
 
@@ -269,7 +273,7 @@ we need a stricter control, such as retraining minibatch OT with matched random
 number consumption or training a higher-beta pressure-aware variant that actually
 changes assignments.
 
-## SCTW Sampler Evaluation
+## SCTW Sampler Evaluation (Historical)
 
 The current sampler-side evaluation changes only the inference time grid. Training is unchanged.
 We have now revisited both the unconditional Sinkhorn OT checkpoint and the earlier
@@ -323,6 +327,45 @@ Conditional classifier accuracy stayed nearly flat across schedules. This is a u
 result for the sampler-time thesis: SCTW improves FID without an obvious loss of class fidelity.
 The caveat is that the conditional model already receives the label, so the benchmark tests
 integration quality more than multimodal coupling difficulty.
+
+## Current SCTW and Adjoint-SCTW Endpoint Audit
+
+The historical numbers above predate the tightened feature cache, fixed KID randomness, and
+Heun-1000/2000 learned-ODE reference. The authoritative outputs are now under
+results/sctw_adjoint_suite/remote, with generated tables under
+results/sctw_adjoint_suite/aggregate.
+
+Conditional CIFAR-10 FID:
+
+| NFE | Uniform | SCTW p=0.25 | SCTW p=0.5 | Adjoint p=0.25 | Adjoint p=0.5 |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 5 | 34.2773 | 33.8894 | 35.1704 | 34.8452 | 36.9635 |
+| 10 | 26.5539 | 25.5155 | 25.0465 | 26.2794 | 26.5122 |
+| 20 | 23.1575 | 21.9296 | 21.3915 | 22.5003 | 22.1133 |
+| 50 | 20.8983 | 20.2215 | 19.8781 | 20.4530 | 20.1702 |
+
+Unconditional CIFAR-10 FID:
+
+| NFE | Uniform | SCTW p=0.25 | SCTW p=0.5 | Adjoint p=0.25 | Adjoint p=0.5 |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 5 | 40.6576 | 40.9191 | 43.9747 | 41.0637 | 44.3114 |
+| 10 | 28.3751 | 27.6070 | 27.9096 | 28.1715 | 28.7503 |
+| 20 | 23.4767 | 22.4228 | 22.2098 | 22.8337 | 22.6644 |
+| 50 | 20.5395 | 19.9027 | 19.7008 | 20.0760 | 19.8806 |
+
+SCTW improves FID at NFE 10, 20, and 50 on both checkpoints. Adjoint-SCTW consistently improves
+integration to the fine learned-ODE solution but generally trails SCTW in FID. Across the common
+schedules, integration error and FID become weakly or negatively rank-aligned at moderate and
+high NFE. Treat the image result as descriptive for one checkpoint per setting, not as a
+multi-seed significance claim.
+
+The separate 100-pilot estimator audit rules out an implementation-level explanation for this
+disconnect. Conditional and unconditional `R=4` adjoint profiles differ from exact JVP by `1.56%`
+and `1.17%`, their maximum knot displacements are `0.0066` and `0.0082`, and their schedule
+integration errors differ by at most `0.30%`. Across adjoint seeds `7`, `2718`, and `31415`, the
+largest relative integration-error range is below `0.70%`. All declared FD checks also pass.
+The randomized adjoint takes about four minutes per checkpoint, compared with roughly 30 minutes
+for exact JVP calibration on the same pilot protocol.
 
 ## Deferred Avenues
 

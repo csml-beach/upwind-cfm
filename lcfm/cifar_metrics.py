@@ -7,9 +7,9 @@ import torch.nn.functional as F
 
 from .experiment import _condition_model
 from .models import build_model
-from .schedules import euler_on_grid
+from .schedules import euler_on_grid, heun_on_grid
 from .solvers import solve
-from .utils import set_seed, write_json
+from .utils import file_sha256, set_seed, write_json
 
 
 CIFAR10_CLASSES = [
@@ -52,7 +52,7 @@ def build_cifar_resnet18(num_classes=10):
 
 
 def load_cifar_classifier(path, device):
-    checkpoint = torch.load(path, map_location=device)
+    checkpoint = torch.load(path, map_location=device, weights_only=True)
     model = build_cifar_resnet18(num_classes=int(checkpoint.get("num_classes", 10))).to(device)
     state = checkpoint.get("model", checkpoint)
     model.load_state_dict(state)
@@ -165,7 +165,7 @@ def load_or_make_reference_cache(problem, n_samples, split, labels, cache_dir):
     label_tag = "balanced" if labels is not None else "plain"
     path = cache_dir / f"cifar10_{split}_{label_tag}_{n_samples}_uint8.pt"
     if path.exists():
-        return torch.load(path, map_location="cpu")
+        return torch.load(path, map_location="cpu", weights_only=True)
     payload = {
         "images": cifar_reference_uint8(problem, n_samples, split, labels=labels).cpu(),
         "labels": labels.detach().cpu() if labels is not None else None,
@@ -176,38 +176,130 @@ def load_or_make_reference_cache(problem, n_samples, split, labels, cache_dir):
     return payload
 
 
+class _FeatureIdentity(nn.Module):
+    """Let torchmetrics consume already-extracted Inception features."""
+
+    num_features = 2048
+
+    def forward(self, features):
+        return features
+
+
 @torch.no_grad()
-def fid_kid_metrics(fake_uint8, real_uint8, batch_size, device, kid_subset_size=100):
+def inception_features(images_uint8, batch_size, device, weights_path=None):
+    """Extract torch-fidelity Inception-v3 compatibility features once."""
+    from torchmetrics.image.fid import FrechetInceptionDistance
+
+    metric_device = torch.device(device)
+    holder = FrechetInceptionDistance(
+        feature=2048,
+        normalize=False,
+        feature_extractor_weights_path=str(weights_path) if weights_path is not None else None,
+    ).to(metric_device)
+    extractor = holder.inception
+    chunks = []
+    for start in range(0, images_uint8.shape[0], batch_size):
+        batch = images_uint8[start : start + batch_size].to(metric_device)
+        chunks.append(extractor(batch).detach().cpu())
+    return torch.cat(chunks, dim=0)
+
+
+def load_or_make_inception_reference_cache(
+    problem,
+    n_samples,
+    split,
+    labels,
+    cache_dir,
+    batch_size,
+    device,
+    weights_path=None,
+):
+    """Cache the exact real Inception features reused by every sampler."""
+    import torchmetrics
+
+    cache_dir = Path(cache_dir)
+    reference = load_or_make_reference_cache(problem, n_samples, split, labels, cache_dir)
+    label_tag = "balanced" if labels is not None else "plain"
+    version_tag = torchmetrics.__version__.replace(".", "p")
+    weights_hash = file_sha256(weights_path) if weights_path is not None else "torchmetrics-default"
+    weights_tag = weights_hash[:12]
+    path = cache_dir / f"cifar10_{split}_{label_tag}_{n_samples}_inception2048_tm{version_tag}_{weights_tag}.pt"
+    if path.exists():
+        payload = torch.load(path, map_location="cpu", weights_only=True)
+    else:
+        payload = {
+            "features": inception_features(reference["images"], batch_size, device, weights_path=weights_path),
+            "feature_extractor": "torch-fidelity/inception-v3-compat:2048",
+            "feature_extractor_weights": str(weights_path) if weights_path is not None else "torchmetrics-default",
+            "feature_extractor_weights_sha256": weights_hash,
+            "torchmetrics_version": torchmetrics.__version__,
+            "split": split,
+            "n_samples": int(n_samples),
+            "balanced_labels": labels is not None,
+        }
+        torch.save(payload, path)
+    payload["cache_path"] = str(path)
+    return payload
+
+
+@torch.no_grad()
+def fid_kid_metrics(
+    fake_uint8,
+    real_features,
+    batch_size,
+    device,
+    kid_subset_size=100,
+    kid_seed=1234,
+    weights_path=None,
+):
     from torchmetrics.image.fid import FrechetInceptionDistance
     from torchmetrics.image.kid import KernelInceptionDistance
 
     metric_device = torch.device(device)
-    fid = FrechetInceptionDistance(feature=2048, normalize=False).to(metric_device)
+    fake_features = inception_features(fake_uint8, batch_size, metric_device, weights_path=weights_path)
+    real_features = real_features.detach().cpu()
+    identity = _FeatureIdentity()
+    fid = FrechetInceptionDistance(feature=identity, normalize=False).to(metric_device)
     kid = KernelInceptionDistance(
-        subset_size=min(int(kid_subset_size), int(fake_uint8.shape[0]), int(real_uint8.shape[0])),
+        feature=_FeatureIdentity(),
+        subset_size=min(int(kid_subset_size), int(fake_features.shape[0]), int(real_features.shape[0])),
         normalize=False,
     ).to(metric_device)
 
-    for is_real, images in [(True, real_uint8), (False, fake_uint8)]:
-        for start in range(0, images.shape[0], batch_size):
-            batch = images[start : start + batch_size].to(metric_device)
+    for is_real, features in [(True, real_features), (False, fake_features)]:
+        for start in range(0, features.shape[0], batch_size):
+            batch = features[start : start + batch_size].to(metric_device)
             fid.update(batch, real=is_real)
             kid.update(batch, real=is_real)
 
-    kid_mean, kid_std = kid.compute()
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(int(kid_seed))
+        kid_mean, kid_std = kid.compute()
     return {
         "fid": float(fid.compute().detach().cpu()),
         "kid_mean": float(kid_mean.detach().cpu()),
         "kid_std": float(kid_std.detach().cpu()),
+        "kid_seed": int(kid_seed),
     }
 
 
 @torch.no_grad()
-def generate_cifar_samples(model, problem, config, n_samples, nfe, batch_size, seed, device, time_grid=None):
+def generate_cifar_samples(
+    model,
+    problem,
+    config,
+    n_samples,
+    nfe,
+    batch_size,
+    seed,
+    device,
+    time_grid=None,
+    solver_override=None,
+):
     set_seed(seed)
     chunks = []
     label_chunks = []
-    solver_name = config.get("solver", "euler")
+    solver_name = solver_override or config.get("solver", "euler")
 
     for start in range(0, n_samples, batch_size):
         end = min(start + batch_size, n_samples)
@@ -221,10 +313,12 @@ def generate_cifar_samples(model, problem, config, n_samples, nfe, batch_size, s
         eval_model = _condition_model(model, labels)
         if time_grid is None:
             traj = solve(solver_name, eval_model, x0, {"steps": int(nfe)})
-        else:
-            if solver_name != "euler":
-                raise ValueError("time_grid evaluation is currently defined for Euler sampling only.")
+        elif solver_name == "euler":
             traj = euler_on_grid(eval_model, x0, time_grid)
+        elif solver_name == "heun":
+            traj = heun_on_grid(eval_model, x0, time_grid)
+        else:
+            raise ValueError("time_grid evaluation supports only Euler and Heun.")
         chunks.append(traj[-1].detach().cpu())
         if labels is not None:
             label_chunks.append(labels.detach().cpu())
@@ -237,7 +331,7 @@ def generate_cifar_samples(model, problem, config, n_samples, nfe, batch_size, s
 def load_cifar_generator(run_dir, problem, config, checkpoint_name, device, use_ema=False):
     model = build_model(config.get("model", "unet2d"), problem.dim, config).to(device)
     checkpoint_path = Path(run_dir) / checkpoint_name
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
     if use_ema:
         if not isinstance(checkpoint, dict) or "ema_model" not in checkpoint:
             raise ValueError(f"{checkpoint_path} does not contain EMA weights.")

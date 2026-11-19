@@ -1,0 +1,93 @@
+\section{Experimental Design}
+\label{sec:experiments}
+
+\subsection{Samplers}
+\label{sec:samplers}
+
+For each trained checkpoint, we evaluate the following time meshes at matched Euler NFE:
+\begin{itemize}
+  \item \textbf{Uniform Euler}: $\tau_j=j/K$.
+  \item \textbf{SCTW}: knots from \cref{eq:equidistribution}, with $p=0.25$ and $p=0.5$.
+  \item \textbf{Adjoint-SCTW}: the same mesh rule applied to the randomized terminal-sensitivity
+  profile with $R=4$, again with both declared powers.
+  \item \textbf{Early-heavy power mesh}: $\tau_j=(j/K)^\rho$, with $\rho \in \{2,3\}$.
+  \item \textbf{Late-heavy power mesh}: $\tau_j=1-(1-j/K)^\rho$, with $\rho \in \{2,3\}$.
+  \item \textbf{Symmetric-heavy power mesh}: a power-law mesh concentrated near both endpoints.
+  \item \textbf{VSFM grids}: fixed coasting and uniform-deceleration velocity schedules.
+  \item \textbf{Uniform Heun}: a second-order reference at matched actual NFE; it uses two model
+  evaluations per interval, so an odd budget is rounded down by one evaluation.
+\end{itemize}
+The hand schedules are intentionally competitive. They test whether SCTW's measured profile is
+useful beyond the observation that nonuniform timesteps can help. On low-dimensional, GM16, and
+Burgers cases, a BOSS-style dynamic program \citep{shaul2024bespoke,shaul2024bns} is also retained as an offline optimizer of an
+additive one-step-defect surrogate. It is a strong schedule comparator, not a mathematical ceiling
+on the final endpoint metric, and is not treated as an image-scale default.
+
+\subsection{Calibration and equivalence protocol}
+\label{sec:calibration-protocol}
+
+The default calibration uses 50 fine Heun steps, 16 transport anchors, pilot seed 1311, adjoint
+seed 2718, and $R=4$ terminal probes. Calibration and evaluation source samples are disjoint.
+Low-dimensional and GM16 profiles use 512 pilots, Burgers uses 32 training cases, and image
+models use 100 pilots. Conditional CIFAR uses exactly ten pilots per class. Image calibration is
+chunked without changing labels or probe seeds, with deterministic fallback recorded on
+out-of-memory errors.
+
+The equivalence tier compares centered FD at $\varepsilon\in\{10^{-3},3\times10^{-3}\}$, exact
+discrete-Heun JVP, and randomized adjoints with $R\in\{2,4,8\}$ and three declared probe seeds. We
+report normalized profile error against JVP, maximum knot displacement, common-prior integration
+error, runtime, and peak memory. Only $R=4$ is carried into endpoint-quality evaluation.
+
+\subsection{Benchmarks and metrics}
+\label{sec:benchmarks}
+
+\begin{table}[t]
+  \centering
+  \caption{Benchmarks used in the current draft and why each is scientifically useful.}
+  \label{tab:benchmarks}
+  \begin{tabular}{p{0.22\linewidth}p{0.38\linewidth}p{0.28\linewidth}}
+    \toprule
+    Benchmark & Purpose & Main metrics \\
+    \midrule
+    Conditional CIFAR-10 & Image-scale low-NFE sampling with labels; tests whether time meshes
+    improve sample quality without changing class fidelity. & FID, KID, classifier accuracy. \\
+    Unconditional CIFAR-10 & Image-scale setting where labels do not detangle semantic modes;
+    tests whether SCTW remains useful without conditioning. & FID, KID, predicted-class
+    distribution diagnostics. \\
+    Staged-shapes easy & Procedural image-like benchmark with staged geometric commitment;
+    designed to reveal early-time stiffness. & Feature W1, trajectory diagnostics. \\
+    Five modes, fan modes, spiral & Visual low-dimensional probes where trajectories and
+    mesh allocation can be inspected. & W1/W2, hit rate where meaningful, path metrics. \\
+    GM16 & Three independently trained 16-dimensional anisotropic mixture checkpoints; tests
+    transport sensitivity beyond visual two-dimensional geometry. & W1/W2, mode histogram,
+    integration error. \\
+    Hard Burgers solution map & PDE-inspired initial-to-final map; separates learned-ODE
+    integration error from endpoint PDE error. & Endpoint RMSE, gradient RMSE, integration
+    error to Heun-1000. \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+For CIFAR-10, image quality is measured with FID and KID against CIFAR-10 training images, using
+EMA checkpoints and fixed sample counts. Real Inception features are cached once and reused for
+all samplers, and KID uses a common fixed subset seed so its Monte Carlo variation is paired across
+methods. For low-dimensional targets, we report Wasserstein-style
+matching metrics and hit statistics when the target has explicit modes. For Burgers, we report
+endpoint RMSE to the PDE reference and, separately, integration error to a high-NFE Heun solution
+of the learned ODE. This distinction matters: a biased learned vector field can have a high-NFE
+endpoint that is not the best PDE endpoint, so an under-integrated sampler can occasionally look
+better in endpoint RMSE for the wrong reason.
+
+The learned-ODE integration reference is Heun-1000 on a fixed diagnostic subset for every
+benchmark, with a Heun-2000 convergence check. The image subset contains 32 fixed-prior samples;
+the tighter image reference is computationally feasible because it is evaluated only once per
+checkpoint. Calibration cost is reported separately from sampling NFE and as an amortized cost per
+generated sample.
+
+\subsection{Figures}
+\label{sec:figures}
+
+The draft includes three types of figures. Dataset-breadth figures show what a benchmark contains.
+Schedule diagnostics show the measured self-curvature profile and the resulting knots. Sample or
+trajectory panels show qualitative behavior of generated outputs. Missing figures are tolerated by
+the \verb|\safeincludegraphics| macro so the draft remains compilable while experiments evolve.

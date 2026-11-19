@@ -18,7 +18,7 @@ every idea we tried.
 - `archive/`: old proposals, negative results, and earlier benchmark notes. These files are kept
   for memory, but they should not be read as the current paper plan.
 
-The current active candidate is **Self-Curvature Time Warping (SCTW)**: a training-free,
-oracle-free timestep mesh for low-NFE flow-matching sampling. Pressure theory remains the
-motivation and diagnostic lens, but direct pressure training/coupling is not the main claim at
-this stage.
+The active candidates are **Self-Curvature Time Warping (SCTW)** and **Adjoint-SCTW**:
+training-free, oracle-free population timestep meshes for fixed-NFE flow-matching sampling.
+Pressure theory remains the motivation and diagnostic lens, but direct pressure
+training/coupling is not the main claim at this stage.
